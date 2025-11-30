@@ -1,0 +1,2 @@
+[console_scripts]
+auto-deployer = auto_deployer.main:app_main
