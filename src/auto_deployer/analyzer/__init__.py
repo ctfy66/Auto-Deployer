@@ -1,4 +1,4 @@
-"""Repository analyzer package."""
+"""Repository analysis module."""
 
 from .insights import RepositoryInsights
 from .scanner import RepositoryAnalyzer

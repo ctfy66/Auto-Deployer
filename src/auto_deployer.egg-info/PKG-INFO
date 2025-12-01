@@ -10,6 +10,7 @@ Requires-Python: >=3.10
 Description-Content-Type: text/markdown
 Requires-Dist: paramiko>=3.3
 Requires-Dist: requests>=2.31
+Requires-Dist: python-dotenv>=1.0
 
 # Auto-Deployer
 

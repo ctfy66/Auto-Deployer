@@ -89,17 +89,24 @@ class SSHSession:
             self.connect()
         assert self._client is not None
         
-        # 自动处理 sudo 命令：使用 -S 选项通过 stdin 传递密码
+        # 预处理命令：加载常用环境（nvm 等）
+        # 这样 node/npm 命令可以正常工作
+        env_prefix = "source ~/.nvm/nvm.sh 2>/dev/null; source ~/.bashrc 2>/dev/null; "
+        
+        # 自动处理所有 sudo 命令：使用 -S 选项通过 stdin 传递密码
         actual_command = command
-        needs_sudo_password = command.strip().startswith("sudo ") and self.sudo_password
+        needs_sudo_password = "sudo " in command and self.sudo_password
         if needs_sudo_password:
-            # 确保 sudo 使用 -S 选项从 stdin 读取密码
-            if "sudo -S" not in command:
-                actual_command = command.replace("sudo ", "sudo -S ", 1)
+            # 替换所有的 sudo 为 sudo -S（除非已经是 sudo -S）
+            import re
+            actual_command = re.sub(r'\bsudo\s+(?!-S)', 'sudo -S ', actual_command)
+        
+        # 添加环境前缀
+        actual_command = env_prefix + actual_command
         
         stdin, stdout, stderr = self._client.exec_command(actual_command, timeout=timeout)
         
-        # 如果是 sudo 命令，通过 stdin 发送密码
+        # 如果有 sudo 命令，通过 stdin 发送密码
         if needs_sudo_password and self.sudo_password:
             stdin.write(self.sudo_password + "\n")
             stdin.flush()

@@ -2,18 +2,18 @@
   "llm": {
     "provider": "gemini",
     "model": "gemini-2.0-flash",
-    "api_key": "AIzaSyDGtKLy2asnCEflQDMqzfMI8GOr6MktZoA",
+    "api_key": null,
     "endpoint": null,
     "temperature": 0.0
   },
   "deployment": {
     "workspace_root": ".auto-deployer/workspace",
     "default_max_retries": 3,
-    "default_host": "172.18.188.21",
+    "default_host": null,
     "default_port": 22,
-    "default_username": "ctfy",
+    "default_username": null,
     "default_auth_method": "password",
-    "default_password": "ctfy",
+    "default_password": null,
     "default_key_path": null
   }
 }

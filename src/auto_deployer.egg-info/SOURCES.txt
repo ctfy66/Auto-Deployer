@@ -12,14 +12,10 @@ src/auto_deployer.egg-info/entry_points.txt
 src/auto_deployer.egg-info/requires.txt
 src/auto_deployer.egg-info/top_level.txt
 src/auto_deployer/analyzer/__init__.py
-src/auto_deployer/analyzer/insights.py
-src/auto_deployer/analyzer/scanner.py
 src/auto_deployer/gitops/__init__.py
 src/auto_deployer/gitops/manager.py
 src/auto_deployer/llm/__init__.py
-src/auto_deployer/llm/gemini.py
-src/auto_deployer/llm/openai.py
-src/auto_deployer/llm/provider.py
+src/auto_deployer/llm/agent.py
 src/auto_deployer/ssh/__init__.py
 src/auto_deployer/ssh/credentials.py
 src/auto_deployer/ssh/probe.py

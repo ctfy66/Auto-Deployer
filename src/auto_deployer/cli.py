@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from .config import AppConfig, load_config
@@ -61,6 +63,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--key-path", help="Path to SSH private key", default=None
     )
 
+    # logs 子命令 - 查看 Agent 日志
+    logs_parser = subparsers.add_parser(
+        "logs", help="View agent deployment logs"
+    )
+    logs_parser.add_argument(
+        "--list", "-l", action="store_true", dest="list_logs",
+        help="List all available logs"
+    )
+    logs_parser.add_argument(
+        "--latest", action="store_true",
+        help="Show the latest deployment log"
+    )
+    logs_parser.add_argument(
+        "--file", "-f", type=str,
+        help="Show a specific log file"
+    )
+    logs_parser.add_argument(
+        "--summary", "-s", action="store_true",
+        help="Show summary only (not full output)"
+    )
+
     return parser
 
 
@@ -74,8 +97,145 @@ def _build_context(args: argparse.Namespace) -> CLIContext:
     )
 
 
+def handle_logs_command(args: argparse.Namespace) -> int:
+    """Handle the logs subcommand."""
+    log_dir = Path.cwd() / "agent_logs"
+    
+    if not log_dir.exists():
+        print("📁 No agent logs found. Run a deployment first.")
+        return 0
+    
+    log_files = sorted(log_dir.glob("deploy_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    
+    if not log_files:
+        print("📁 No deployment logs found.")
+        return 0
+    
+    # 列出所有日志
+    if args.list_logs:
+        print(f"📁 Agent logs in: {log_dir}\n")
+        print(f"{'#':<4} {'Status':<12} {'Repository':<30} {'Time':<20} {'File'}")
+        print("-" * 100)
+        for i, log_file in enumerate(log_files, 1):
+            try:
+                with open(log_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                status = data.get("status", "unknown")
+                repo = data.get("repo_url", "").split("/")[-1].replace(".git", "")
+                start_time = data.get("start_time", "")[:19].replace("T", " ")
+                status_emoji = {"success": "✅", "failed": "❌", "running": "🔄"}.get(status, "❓")
+                print(f"{i:<4} {status_emoji} {status:<10} {repo:<30} {start_time:<20} {log_file.name}")
+            except Exception:
+                print(f"{i:<4} ❓ {'error':<10} {'?':<30} {'?':<20} {log_file.name}")
+        return 0
+    
+    # 选择要显示的日志文件
+    target_file = None
+    if args.file:
+        target_file = Path(args.file)
+        if not target_file.exists():
+            # 尝试在 log_dir 中查找
+            target_file = log_dir / args.file
+        if not target_file.exists():
+            print(f"❌ Log file not found: {args.file}")
+            return 1
+    elif args.latest or not (args.list_logs or args.file):
+        # 默认显示最新的
+        target_file = log_files[0]
+    
+    if target_file:
+        show_log_file(target_file, summary_only=args.summary)
+    
+    return 0
+
+
+def show_log_file(log_file: Path, summary_only: bool = False) -> None:
+    """Display a deployment log file."""
+    with open(log_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    
+    status = data.get("status", "unknown")
+    status_emoji = {"success": "✅", "failed": "❌", "running": "🔄", "max_iterations": "⏱️"}.get(status, "❓")
+    
+    print(f"\n{'='*60}")
+    print(f"📄 Deployment Log: {log_file.name}")
+    print(f"{'='*60}")
+    print(f"🔗 Repository: {data.get('repo_url', 'N/A')}")
+    print(f"🖥️  Target:     {data.get('target', 'N/A')}")
+    print(f"⏰ Started:    {data.get('start_time', 'N/A')}")
+    print(f"⏱️  Ended:      {data.get('end_time', 'N/A')}")
+    print(f"{status_emoji} Status:     {status}")
+    print(f"📊 Steps:      {len(data.get('steps', []))}")
+    print(f"{'='*60}\n")
+    
+    steps = data.get("steps", [])
+    
+    for step in steps:
+        iteration = step.get("iteration", "?")
+        action = step.get("action", "?")
+        command = step.get("command", "")
+        reasoning = step.get("reasoning", "")
+        result = step.get("result", {})
+        
+        # 确定状态符号
+        if action == "done":
+            status_icon = "✅"
+        elif action == "failed":
+            status_icon = "❌"
+        elif isinstance(result, dict) and result.get("success"):
+            status_icon = "✓"
+        elif isinstance(result, dict) and not result.get("success"):
+            status_icon = "✗"
+        else:
+            status_icon = "•"
+        
+        print(f"[{iteration}] {status_icon} {action.upper()}")
+        
+        if reasoning:
+            print(f"    💭 {reasoning}")
+        
+        if command:
+            print(f"    $ {command}")
+        
+        if step.get("message"):
+            print(f"    📝 {step.get('message')}")
+        
+        if not summary_only and isinstance(result, dict):
+            exit_code = result.get("exit_code", "")
+            stdout = result.get("stdout", "").strip()
+            stderr = result.get("stderr", "").strip()
+            
+            if exit_code != "":
+                print(f"    Exit: {exit_code}")
+            
+            if stdout:
+                # 限制输出长度
+                lines = stdout.split("\n")[:10]
+                for line in lines:
+                    print(f"    │ {line[:100]}")
+                if len(stdout.split("\n")) > 10:
+                    print(f"    │ ... ({len(stdout.split(chr(10)))} lines total)")
+            
+            if stderr and not result.get("success"):
+                print(f"    ⚠️ stderr:")
+                lines = stderr.split("\n")[:5]
+                for line in lines:
+                    print(f"    │ {line[:100]}")
+        
+        print()
+    
+    print(f"{'='*60}")
+    print(f"📄 Full log: {log_file}")
+    print(f"{'='*60}\n")
+
+
 def dispatch_command(args: argparse.Namespace) -> int:
     context = _build_context(args)
+    
+    # 处理 logs 命令
+    if args.command == "logs":
+        return handle_logs_command(args)
+    
     workflow = DeploymentWorkflow(
         config=context.config,
         workspace=context.workspace,

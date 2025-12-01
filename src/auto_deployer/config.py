@@ -8,6 +8,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from dotenv import load_dotenv
+
+# Load .env file if it exists
+load_dotenv()
+
 _DEFAULT_CONFIG_PATH = Path("config/default_config.json")
 
 
@@ -20,6 +25,7 @@ class LLMConfig:
     api_key: Optional[str] = None
     endpoint: Optional[str] = None
     temperature: float = 0.0
+    proxy: Optional[str] = None  # 代理设置，如 "http://127.0.0.1:7890"
 
 
 @dataclass
@@ -56,7 +62,17 @@ class AppConfig:
 
 
 def load_config(path: Optional[str] = None) -> AppConfig:
-    """Load configuration from `path` or the default location."""
+    """Load configuration from `path` or the default location.
+    
+    Environment variables (higher priority than config file):
+    - AUTO_DEPLOYER_LLM_API_KEY or AUTO_DEPLOYER_GEMINI_API_KEY: LLM API key
+    - AUTO_DEPLOYER_LLM_PROXY: HTTP proxy for LLM requests
+    - AUTO_DEPLOYER_SSH_HOST: Default SSH host
+    - AUTO_DEPLOYER_SSH_PORT: Default SSH port
+    - AUTO_DEPLOYER_SSH_USERNAME: Default SSH username
+    - AUTO_DEPLOYER_SSH_PASSWORD: Default SSH password
+    - AUTO_DEPLOYER_SSH_KEY_PATH: Path to SSH private key
+    """
 
     candidate_paths = []
     if path:
@@ -68,6 +84,8 @@ def load_config(path: Optional[str] = None) -> AppConfig:
             with candidate.open("r", encoding="utf-8") as handle:
                 data = json.load(handle)
             config = AppConfig.from_dict(data)
+            
+            # Load LLM settings from environment variables
             if not config.llm.api_key:
                 provider_key = (
                     f"AUTO_DEPLOYER_{config.llm.provider.upper().replace('-', '_')}_API_KEY"
@@ -75,6 +93,35 @@ def load_config(path: Optional[str] = None) -> AppConfig:
                 config.llm.api_key = os.getenv(provider_key) or os.getenv(
                     "AUTO_DEPLOYER_LLM_API_KEY"
                 )
+            
+            # Load proxy from environment variable
+            env_proxy = os.getenv("AUTO_DEPLOYER_LLM_PROXY")
+            if env_proxy:
+                config.llm.proxy = env_proxy
+            
+            # Load SSH settings from environment variables
+            env_host = os.getenv("AUTO_DEPLOYER_SSH_HOST")
+            if env_host:
+                config.deployment.default_host = env_host
+            
+            env_port = os.getenv("AUTO_DEPLOYER_SSH_PORT")
+            if env_port:
+                config.deployment.default_port = int(env_port)
+            
+            env_username = os.getenv("AUTO_DEPLOYER_SSH_USERNAME")
+            if env_username:
+                config.deployment.default_username = env_username
+            
+            env_password = os.getenv("AUTO_DEPLOYER_SSH_PASSWORD")
+            if env_password:
+                config.deployment.default_password = env_password
+                config.deployment.default_auth_method = "password"
+            
+            env_key_path = os.getenv("AUTO_DEPLOYER_SSH_KEY_PATH")
+            if env_key_path:
+                config.deployment.default_key_path = env_key_path
+                config.deployment.default_auth_method = "key"
+            
             return config
 
     raise FileNotFoundError(
