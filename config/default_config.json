@@ -6,6 +6,9 @@
     "endpoint": null,
     "temperature": 0.0
   },
+  "agent": {
+    "max_iterations": 20
+  },
   "deployment": {
     "workspace_root": ".auto-deployer/workspace",
     "default_host": null,

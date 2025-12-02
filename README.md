@@ -156,19 +156,10 @@ src/auto_deployer/
 │   └── probe.py
 └── workspace/          # 工作空间管理
     └── manager.py
-```
 
-## 开发
-
-运行测试：
-
-```bash
-python -m pytest tests/ -v
-```
 
 ## 已知限制
 
-- Agent 最多执行 20 次迭代，超过后会放弃
 - 目前假设目标服务器是 Linux 系统
 - 不支持需要交互式输入的部署流程
 

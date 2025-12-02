@@ -113,7 +113,7 @@ class DeploymentWorkflow:
         if repo_context:
             logger.info("   (with pre-analyzed repository context)")
         
-        agent = DeploymentAgent(self.config.llm, max_iterations=20)
+        agent = DeploymentAgent(self.config.llm, max_iterations=self.config.agent.max_iterations)
         success = agent.deploy(request, host_facts, session, repo_context)
         
         if success:

@@ -29,6 +29,13 @@ class LLMConfig:
 
 
 @dataclass
+class AgentConfig:
+    """Configuration for the deployment agent."""
+
+    max_iterations: int = 20
+
+
+@dataclass
 class DeploymentConfig:
     """Settings related to deployment execution."""
 
@@ -46,14 +53,17 @@ class AppConfig:
     """Top-level configuration."""
 
     llm: LLMConfig = field(default_factory=LLMConfig)
+    agent: AgentConfig = field(default_factory=AgentConfig)
     deployment: DeploymentConfig = field(default_factory=DeploymentConfig)
 
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "AppConfig":
         llm_payload = payload.get("llm", {}) or {}
+        agent_payload = payload.get("agent", {}) or {}
         deployment_payload = payload.get("deployment", {}) or {}
         return cls(
             llm=LLMConfig(**{**LLMConfig().__dict__, **llm_payload}),
+            agent=AgentConfig(**{**AgentConfig().__dict__, **agent_payload}),
             deployment=DeploymentConfig(
                 **{**DeploymentConfig().__dict__, **deployment_payload}
             ),
