@@ -9,7 +9,6 @@ class ConfigTests(unittest.TestCase):
     def test_loads_default_config(self) -> None:
         config = load_config()
         self.assertIsInstance(config, AppConfig)
-        self.assertEqual(config.deployment.default_max_retries, 3)
         self.assertEqual(config.llm.provider, "gemini")
 
     def test_loads_custom_config(self) -> None:
@@ -17,15 +16,13 @@ class ConfigTests(unittest.TestCase):
         temp_file.write_text(
             """
 {
-  \"llm\": {\"provider\": \"custom\", \"model\": \"x\"},
-  \"deployment\": {\"default_max_retries\": 5}
+  \"llm\": {\"provider\": \"custom\", \"model\": \"x\"}
 }
 """.strip()
         )
         try:
             config = load_config(str(temp_file))
             self.assertEqual(config.llm.provider, "custom")
-            self.assertEqual(config.deployment.default_max_retries, 5)
         finally:
             temp_file.unlink(missing_ok=True)
 

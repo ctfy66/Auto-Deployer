@@ -1,6 +1,5 @@
-"""Repository analysis module."""
+"""Repository analyzer module for extracting deployment-relevant context."""
 
-from .insights import RepositoryInsights
-from .scanner import RepositoryAnalyzer
+from .repo_analyzer import RepoAnalyzer, RepoContext
 
-__all__ = ["RepositoryAnalyzer", "RepositoryInsights"]
+__all__ = ["RepoAnalyzer", "RepoContext"]

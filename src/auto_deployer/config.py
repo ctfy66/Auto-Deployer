@@ -33,7 +33,6 @@ class DeploymentConfig:
     """Settings related to deployment execution."""
 
     workspace_root: str = ".auto-deployer/workspace"
-    default_max_retries: int = 3
     default_host: Optional[str] = None
     default_port: int = 22
     default_username: Optional[str] = None

@@ -18,7 +18,6 @@ class CLIContext:
 
     config: AppConfig
     workspace: str
-    max_retries: Optional[int]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,12 +36,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Directory for local repository analysis.",
-    )
-    parser.add_argument(
-        "--max-retries",
-        type=int,
-        default=None,
-        help="Override retry count for this run.",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -93,7 +86,6 @@ def _build_context(args: argparse.Namespace) -> CLIContext:
     return CLIContext(
         config=config,
         workspace=workspace,
-        max_retries=args.max_retries,
     )
 
 
@@ -239,7 +231,6 @@ def dispatch_command(args: argparse.Namespace) -> int:
     workflow = DeploymentWorkflow(
         config=context.config,
         workspace=context.workspace,
-        max_retries=context.max_retries,
     )
 
     if args.command == "deploy":

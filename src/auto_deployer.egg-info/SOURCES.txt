@@ -12,6 +12,7 @@ src/auto_deployer.egg-info/entry_points.txt
 src/auto_deployer.egg-info/requires.txt
 src/auto_deployer.egg-info/top_level.txt
 src/auto_deployer/analyzer/__init__.py
+src/auto_deployer/analyzer/repo_analyzer.py
 src/auto_deployer/gitops/__init__.py
 src/auto_deployer/gitops/manager.py
 src/auto_deployer/llm/__init__.py

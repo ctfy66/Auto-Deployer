@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..ssh import RemoteHostFacts
     from ..workflow import DeploymentRequest
     from ..ssh import SSHSession
+    from ..analyzer import RepoContext
 
 logger = logging.getLogger(__name__)
 
@@ -85,9 +86,17 @@ class DeploymentAgent:
         request: "DeploymentRequest",
         host_facts: Optional["RemoteHostFacts"],
         ssh_session: "SSHSession",
+        repo_context: Optional["RepoContext"] = None,
     ) -> bool:
         """
         Run the autonomous deployment loop.
+        
+        Args:
+            request: Deployment request with repo URL and SSH details
+            host_facts: Information about the remote host
+            ssh_session: Active SSH session
+            repo_context: Pre-analyzed repository context (optional but recommended)
+            
         Returns True if deployment succeeded, False otherwise.
         """
         logger.info("Agent starting deployment...")
@@ -95,14 +104,17 @@ class DeploymentAgent:
         # 初始化日志记录
         self._init_deployment_log(request)
         
-        # 初始化上下文 - 只传递 repo_url，LLM 自行分析
+        # 初始化上下文 - 包含预分析的仓库信息
         self.history = []
-        context = self._build_initial_context(request, host_facts)
+        context = self._build_initial_context(request, host_facts, repo_context)
         
         # 记录初始上下文
         self.deployment_log["context"] = {
             "repo_url": context.get("repo_url"),
             "ssh_target": context.get("ssh_target"),
+            "has_repo_analysis": repo_context is not None,
+            "project_type": repo_context.project_type if repo_context else None,
+            "framework": repo_context.detected_framework if repo_context else None,
         }
         
         for iteration in range(1, self.max_iterations + 1):
@@ -309,19 +321,102 @@ class DeploymentAgent:
         self,
         request: "DeploymentRequest",
         host_facts: Optional["RemoteHostFacts"],
+        repo_context: Optional["RepoContext"] = None,
     ) -> dict:
         """Build the initial context for the agent."""
-        return {
+        ctx = {
             "repo_url": request.repo_url,
             "ssh_target": f"{request.username}@{request.host}:{request.port}",
             "remote_host": host_facts.to_payload() if host_facts else None,
         }
+        
+        # 添加预分析的仓库信息
+        if repo_context:
+            ctx["repo_analysis"] = repo_context.to_prompt_context()
+            ctx["project_type"] = repo_context.project_type
+            ctx["framework"] = repo_context.detected_framework
+            ctx["scripts"] = repo_context.detected_scripts
+        
+        return ctx
 
     def _build_prompt(self, context: dict) -> str:
         """Build the prompt for the LLM agent."""
         
-        # 构建系统提示词 - 通用、结构化、专业
-        system_prompt = """# Role
+        # 检查是否有预分析的仓库信息
+        has_repo_analysis = "repo_analysis" in context
+        
+        # 构建系统提示词 - 根据是否有预分析调整
+        if has_repo_analysis:
+            system_prompt = """# Role
+You are an autonomous DevOps deployment agent. You execute shell commands on a remote Linux server via SSH to deploy applications.
+
+# Goal  
+Deploy the given repository and ensure the application is running and accessible. Success = application responds to HTTP requests with actual content.
+
+# Environment
+- You have SSH access to a remote Linux server
+- Commands you output will be executed directly on the remote server
+- You will see the stdout, stderr, and exit code of each command
+- sudo is available (password handled automatically)
+- Common tools: git, npm, node, python3, pip, curl, systemctl, pm2
+
+# ⭐ IMPORTANT: Repository Analysis Provided
+You have been given a **pre-analyzed repository context** below. Use this information to make informed decisions:
+- Project type and framework are already identified
+- Key configuration files (package.json, requirements.txt, Dockerfile, etc.) are provided
+- Available scripts and dependencies are listed
+- Directory structure is shown
+
+**Do NOT waste iterations re-analyzing the repository!** Use the provided information directly.
+
+# Available Actions
+You must respond with JSON in this exact format:
+```json
+{
+  "action": "execute" | "done" | "failed",
+  "command": "shell command to run (required if action=execute)",
+  "reasoning": "brief explanation of your decision",
+  "message": "final status message (required if action=done or failed)"
+}
+```
+
+# Decision Rules
+1. **execute**: Run a shell command and observe the result
+2. **done**: Deployment successful - app is verified running AND curl returned actual content
+3. **failed**: Deployment impossible after reasonable attempts
+
+# ⚠️ CRITICAL RULES (MUST FOLLOW)
+1. **NEVER run server commands directly!** Commands like `npm run dev`, `npm start`, `python app.py` will BLOCK FOREVER.
+2. **ALWAYS use nohup for servers**: `nohup <cmd> > app.log 2>&1 &`
+3. **Verification MUST show actual content!** Empty curl response = FAILURE, not success!
+4. **Check app.log if curl fails** to see error messages.
+5. **Use the pre-analyzed info!** Don't cat files that are already provided.
+
+# Deployment Flow (with pre-analysis)
+1. Clone: `rm -rf ~/app && git clone <repo> ~/app`
+2. Install dependencies (based on pre-analyzed project type)
+3. Start server IN BACKGROUND (use correct command from package.json scripts or framework knowledge)
+4. Wait: `sleep 5`
+5. Verify: `curl -s http://localhost:<port>`
+6. If empty, check logs: `cat ~/app/app.log`
+
+# Common Ports
+- VitePress/Vite: 5173
+- React (CRA): 3000
+- Next.js: 3000
+- Flask: 5000
+- Django: 8000
+- Express: 3000
+
+# Error Handling
+- "command not found" → install the tool or check PATH
+- "port already in use" → kill existing process: `lsof -ti:<port> | xargs kill -9`
+- "permission denied" → use sudo
+- "module not found" → install dependencies
+- Empty curl response → Server failed to start! Check app.log"""
+        else:
+            # 没有预分析时的 prompt（需要自己探索）
+            system_prompt = """# Role
 You are an autonomous DevOps deployment agent. You execute shell commands on a remote Linux server via SSH to deploy applications.
 
 # Goal  
@@ -345,11 +440,6 @@ You must respond with JSON in this exact format:
 }
 ```
 
-# Decision Rules
-1. **execute**: Run a shell command and observe the result
-2. **done**: Deployment successful - app is verified running AND curl returned actual content
-3. **failed**: Deployment impossible after reasonable attempts
-
 # ⚠️ CRITICAL RULES (MUST FOLLOW)
 1. **ALWAYS analyze the repository FIRST** after cloning! Check package.json OR requirements.txt to determine project type.
 2. **NEVER assume project type!** A repo might have package.json but be a Python project.
@@ -358,41 +448,20 @@ You must respond with JSON in this exact format:
 5. **Verification MUST show actual content!** Empty curl response = FAILURE, not success!
 6. **Check app.log if curl fails** to see error messages.
 
-# Key Principles
-- If a command fails, READ the error message carefully before retrying
-- Do NOT blindly retry failed commands - understand WHY it failed first
-- Prefer simple solutions: dev mode > build + production
-- Do NOT modify source code unless absolutely necessary
-- Maximum ~15 commands should be enough for most deployments
-
-# ⭐ MANDATORY Deployment Flow
+# Deployment Flow
 1. Clone: `rm -rf ~/app && git clone <repo> ~/app`
 2. **ANALYZE FIRST**: `cat ~/app/package.json 2>/dev/null || cat ~/app/requirements.txt 2>/dev/null || ls ~/app`
-3. Install dependencies based on project type:
-   - Node.js: `cd ~/app && npm install`
-   - Python: `cd ~/app && pip install -r requirements.txt`
-4. Start server IN BACKGROUND based on project type:
-   - Node.js: `cd ~/app && nohup npm run dev > app.log 2>&1 &` (check package.json scripts first!)
-   - Python Flask: `cd ~/app && nohup python app.py > app.log 2>&1 &`
+3. Install dependencies based on project type
+4. Start server IN BACKGROUND
 5. Wait: `sleep 5`
-6. Verify (MUST return content): `curl -s http://localhost:<port>`
-7. If empty, check logs: `cat ~/app/app.log`
-8. Only mark done if curl returned actual HTML/JSON content!
+6. Verify: `curl -s http://localhost:<port>`
 
 # Common Ports
 - VitePress/Vite: 5173
 - React (CRA): 3000
 - Next.js: 3000
-- Flask: 5000 (or 8000)
-- Django: 8000
-
-# Error Handling
-- "command not found" → install the tool or check PATH
-- "port already in use" → kill existing process: `lsof -ti:<port> | xargs kill -9`
-- "permission denied" → use sudo
-- "module not found" → install dependencies
-- Empty curl response → Server failed to start! Check app.log
-- "Missing script" → Wrong command for this project type, re-analyze"""
+- Flask: 5000
+- Django: 8000"""
 
         # 构建当前状态
         state = {
@@ -405,15 +474,16 @@ You must respond with JSON in this exact format:
         }
         
         # 组合最终 prompt
-        full_prompt = f"""{system_prompt}
-
----
-
-# Current State
-```json
-{json.dumps(state, indent=2, ensure_ascii=False)}
-```
-
-Based on the current state and command history, decide your next action. Respond with JSON only."""
-
-        return full_prompt
+        parts = [system_prompt, "\n---\n"]
+        
+        # 添加预分析的仓库上下文
+        if has_repo_analysis:
+            parts.append("# Pre-Analyzed Repository Context")
+            parts.append(context["repo_analysis"])
+            parts.append("\n---\n")
+        
+        parts.append("# Current Deployment State")
+        parts.append(f"```json\n{json.dumps(state, indent=2, ensure_ascii=False)}\n```")
+        parts.append("\nBased on the above information, decide your next action. Respond with JSON only.")
+        
+        return "\n".join(parts)
