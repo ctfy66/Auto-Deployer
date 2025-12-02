@@ -84,7 +84,7 @@ class SSHSession:
             self._client.close()
             self._client = None
 
-    def run(self, command: str, *, timeout: Optional[int] = None) -> SSHCommandResult:
+    def run(self, command: str, *, timeout: Optional[int] = None, stream_output: bool = True) -> SSHCommandResult:
         if not self._client:
             self.connect()
         assert self._client is not None
@@ -111,9 +111,57 @@ class SSHSession:
             stdin.write(self.sudo_password + "\n")
             stdin.flush()
         
-        exit_status = stdout.channel.recv_exit_status()
-        stdout_text = stdout.read().decode("utf-8", errors="replace")
-        stderr_text = stderr.read().decode("utf-8", errors="replace")
+        # 实时输出模式：边执行边显示输出
+        if stream_output:
+            import sys
+            stdout_chunks = []
+            stderr_chunks = []
+            
+            # 设置非阻塞读取
+            stdout.channel.setblocking(0)
+            stderr.channel.setblocking(0)
+            
+            while not stdout.channel.exit_status_ready():
+                # 读取 stdout
+                while stdout.channel.recv_ready():
+                    chunk = stdout.channel.recv(1024).decode("utf-8", errors="replace")
+                    stdout_chunks.append(chunk)
+                    sys.stdout.write(chunk)
+                    sys.stdout.flush()
+                
+                # 读取 stderr
+                while stderr.channel.recv_stderr_ready():
+                    chunk = stderr.channel.recv_stderr(1024).decode("utf-8", errors="replace")
+                    stderr_chunks.append(chunk)
+                    sys.stderr.write(chunk)
+                    sys.stderr.flush()
+                
+                # 短暂休眠避免 CPU 占用过高
+                import time
+                time.sleep(0.1)
+            
+            # 读取剩余输出
+            while stdout.channel.recv_ready():
+                chunk = stdout.channel.recv(1024).decode("utf-8", errors="replace")
+                stdout_chunks.append(chunk)
+                sys.stdout.write(chunk)
+                sys.stdout.flush()
+            
+            while stderr.channel.recv_stderr_ready():
+                chunk = stderr.channel.recv_stderr(1024).decode("utf-8", errors="replace")
+                stderr_chunks.append(chunk)
+                sys.stderr.write(chunk)
+                sys.stderr.flush()
+            
+            exit_status = stdout.channel.recv_exit_status()
+            stdout_text = "".join(stdout_chunks)
+            stderr_text = "".join(stderr_chunks)
+        else:
+            # 原有模式：等待命令完成后返回
+            exit_status = stdout.channel.recv_exit_status()
+            stdout_text = stdout.read().decode("utf-8", errors="replace")
+            stderr_text = stderr.read().decode("utf-8", errors="replace")
+        
         return SSHCommandResult(
             command=command,
             stdout=stdout_text.strip(),

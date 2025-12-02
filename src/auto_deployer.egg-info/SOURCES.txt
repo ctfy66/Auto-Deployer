@@ -15,6 +15,8 @@ src/auto_deployer/analyzer/__init__.py
 src/auto_deployer/analyzer/repo_analyzer.py
 src/auto_deployer/gitops/__init__.py
 src/auto_deployer/gitops/manager.py
+src/auto_deployer/interaction/__init__.py
+src/auto_deployer/interaction/handler.py
 src/auto_deployer/llm/__init__.py
 src/auto_deployer/llm/agent.py
 src/auto_deployer/ssh/__init__.py
@@ -27,6 +29,7 @@ src/auto_deployer/workspace/manager.py
 tests/test_analyzer.py
 tests/test_config.py
 tests/test_gitops.py
+tests/test_interaction.py
 tests/test_ssh.py
 tests/test_workflow_failure.py
 tests/test_workspace.py

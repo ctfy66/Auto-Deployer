@@ -43,7 +43,19 @@ def build_parser() -> argparse.ArgumentParser:
         "deploy", help="Trigger a deployment for a GitHub repository"
     )
     deploy_parser.add_argument("--repo", required=True, help="Git repository URL")
-    deploy_parser.add_argument("--host", help="Target server host")
+    
+    # 本地部署模式
+    deploy_parser.add_argument(
+        "--local", "-L", action="store_true",
+        help="Deploy locally on this machine (no SSH needed)"
+    )
+    deploy_parser.add_argument(
+        "--deploy-dir", type=str, default=None,
+        help="Local directory for deployment (default: ~/app)"
+    )
+    
+    # SSH 远程部署选项
+    deploy_parser.add_argument("--host", help="Target server host (for remote deployment)")
     deploy_parser.add_argument("--port", type=int, default=None, help="SSH port")
     deploy_parser.add_argument("--user", help="SSH username")
     deploy_parser.add_argument(
@@ -234,6 +246,20 @@ def dispatch_command(args: argparse.Namespace) -> int:
     )
 
     if args.command == "deploy":
+        # 检查是否是本地部署模式
+        if getattr(args, "local", False):
+            # 本地部署模式
+            from .workflow import LocalDeploymentRequest
+            
+            deploy_dir = args.deploy_dir  # 可以为 None，workflow 会使用默认值
+            request = LocalDeploymentRequest(
+                repo_url=args.repo,
+                deploy_dir=deploy_dir,
+            )
+            workflow.run_local_deploy(request)
+            return 0
+        
+        # SSH 远程部署模式
         deployment = context.config.deployment
         host = args.host or deployment.default_host
         port = args.port or deployment.default_port

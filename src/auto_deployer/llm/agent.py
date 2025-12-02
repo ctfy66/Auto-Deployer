@@ -4,19 +4,29 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, asdict
+import platform
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, TYPE_CHECKING
+from typing import Optional, List, Union, TYPE_CHECKING
 
 import requests
 
 from ..config import LLMConfig
+from ..interaction import (
+    UserInteractionHandler,
+    InteractionRequest,
+    InteractionResponse,
+    CLIInteractionHandler,
+    InputType,
+    QuestionCategory,
+)
 
 if TYPE_CHECKING:
     from ..ssh import RemoteHostFacts
-    from ..workflow import DeploymentRequest
+    from ..workflow import DeploymentRequest, LocalDeploymentRequest
     from ..ssh import SSHSession
+    from ..local import LocalSession, LocalHostFacts
     from ..analyzer import RepoContext
 
 logger = logging.getLogger(__name__)
@@ -25,10 +35,17 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AgentAction:
     """An action decided by the LLM agent."""
-    action_type: str  # "execute", "done", "failed"
+    action_type: str  # "execute", "done", "failed", "ask_user"
     command: Optional[str] = None
     reasoning: Optional[str] = None
     message: Optional[str] = None
+    # 用户交互相关字段
+    question: Optional[str] = None              # 要问用户的问题
+    options: Optional[List[str]] = None         # 可选项
+    input_type: str = "choice"                  # "choice", "text", "confirm", "secret"
+    category: str = "decision"                  # "decision", "confirmation", "information", "error_recovery"
+    context: Optional[str] = None               # 附加上下文
+    default_option: Optional[str] = None        # 默认选项
 
 
 @dataclass 
@@ -48,16 +65,25 @@ class DeploymentAgent:
     The agent operates in a loop:
     1. Observe: See the current state (repo info, command history)
     2. Think: LLM decides what to do next
-    3. Act: Execute the command
+    3. Act: Execute the command OR ask user for input
     4. Repeat until done or max iterations reached
     """
 
-    def __init__(self, config: LLMConfig, max_iterations: int = 20, log_dir: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        config: LLMConfig,
+        max_iterations: int = 20,
+        log_dir: Optional[str] = None,
+        interaction_handler: Optional[UserInteractionHandler] = None,
+    ) -> None:
         if not config.api_key:
             raise ValueError("Agent requires an API key")
         self.config = config
         self.max_iterations = max_iterations
         self.session = requests.Session()
+        
+        # 用户交互处理器 - 默认使用 CLI
+        self.interaction_handler = interaction_handler or CLIInteractionHandler()
         
         # 日志目录
         self.log_dir = Path(log_dir) if log_dir else Path.cwd() / "agent_logs"
@@ -66,6 +92,9 @@ class DeploymentAgent:
         # 当前部署的日志文件
         self.current_log_file: Optional[Path] = None
         self.deployment_log: dict = {}
+        
+        # 用户交互历史（发送给 LLM）
+        self.user_interactions: List[dict] = []
         
         # 设置代理 - 优先使用配置文件，其次使用环境变量
         import os
@@ -99,7 +128,34 @@ class DeploymentAgent:
             
         Returns True if deployment succeeded, False otherwise.
         """
-        logger.info("Agent starting deployment...")
+        # 打印详细的配置信息
+        logger.info("=" * 60)
+        logger.info("🚀 Auto-Deployer Agent Starting")
+        logger.info("=" * 60)
+        logger.info("📋 Configuration:")
+        logger.info("   LLM Model:      %s", self.config.model)
+        logger.info("   LLM Endpoint:   %s", self.base_endpoint[:50] + "..." if len(self.base_endpoint) > 50 else self.base_endpoint)
+        logger.info("   Max Iterations: %d", self.max_iterations)
+        logger.info("   Temperature:    %.2f", self.config.temperature)
+        logger.info("")
+        logger.info("🎯 Deployment Target:")
+        logger.info("   Repository:     %s", request.repo_url)
+        logger.info("   Server:         %s@%s:%d", request.username, request.host, request.port)
+        logger.info("   Auth Method:    %s", request.auth_method)
+        if host_facts:
+            logger.info("")
+            logger.info("🖥️  Remote Host Info:")
+            logger.info("   Hostname:       %s", host_facts.hostname)
+            logger.info("   OS:             %s", host_facts.os_release)
+            logger.info("   Kernel:         %s", host_facts.kernel)
+        if repo_context:
+            logger.info("")
+            logger.info("📦 Repository Analysis:")
+            logger.info("   Project Type:   %s", repo_context.project_type or "unknown")
+            logger.info("   Framework:      %s", repo_context.detected_framework or "none detected")
+            logger.info("   Scripts:        %s", ", ".join(repo_context.detected_scripts) if repo_context.detected_scripts else "none")
+        logger.info("=" * 60)
+        logger.info("")
         
         # 初始化日志记录
         self._init_deployment_log(request)
@@ -191,6 +247,47 @@ class DeploymentAgent:
                 
                 # 每步都保存日志（防止中断丢失）
                 self._save_deployment_log()
+            
+            elif action.action_type == "ask_user" and action.question:
+                # 处理用户交互请求
+                logger.info(f"💬 Agent asking user: {action.question[:50]}...")
+                if action.reasoning:
+                    logger.info(f"   Reason: {action.reasoning}")
+                
+                # 创建交互请求
+                user_response = self._ask_user(action)
+                
+                # 记录到日志
+                step_log["question"] = action.question
+                step_log["options"] = action.options
+                step_log["result"] = {
+                    "user_response": user_response.value,
+                    "cancelled": user_response.cancelled,
+                    "is_custom": user_response.is_custom,
+                }
+                self.deployment_log["steps"].append(step_log)
+                
+                # 如果用户取消，终止部署
+                if user_response.cancelled:
+                    logger.info("   用户取消了操作")
+                    self.deployment_log["status"] = "cancelled"
+                    self.deployment_log["end_time"] = datetime.now().isoformat()
+                    self._save_deployment_log()
+                    logger.info(f"📄 Log saved to: {self.current_log_file}")
+                    return False
+                
+                # 记录用户回复到交互历史
+                self.user_interactions.append({
+                    "iteration": iteration,
+                    "question": action.question,
+                    "options": action.options,
+                    "user_response": user_response.value,
+                    "is_custom": user_response.is_custom,
+                })
+                
+                logger.info(f"   用户回复: {user_response.value}")
+                self._save_deployment_log()
+            
             else:
                 logger.warning(f"Unknown action: {action.action_type}")
         
@@ -200,6 +297,217 @@ class DeploymentAgent:
         logger.error("❌ Agent reached max iterations without completing")
         logger.info(f"📄 Log saved to: {self.current_log_file}")
         return False
+
+    def deploy_local(
+        self,
+        request: "LocalDeploymentRequest",
+        host_facts: Optional["LocalHostFacts"],
+        local_session: "LocalSession",
+        repo_context: Optional["RepoContext"] = None,
+    ) -> bool:
+        """
+        Run the autonomous deployment loop locally.
+        
+        Args:
+            request: Local deployment request with repo URL
+            host_facts: Information about the local host
+            local_session: Local command execution session
+            repo_context: Pre-analyzed repository context (optional but recommended)
+            
+        Returns True if deployment succeeded, False otherwise.
+        """
+        # 打印详细的配置信息
+        logger.info("=" * 60)
+        logger.info("🚀 Auto-Deployer Agent Starting (LOCAL MODE)")
+        logger.info("=" * 60)
+        logger.info("📋 Configuration:")
+        logger.info("   LLM Model:      %s", self.config.model)
+        logger.info("   LLM Endpoint:   %s", self.base_endpoint[:50] + "..." if len(self.base_endpoint) > 50 else self.base_endpoint)
+        logger.info("   Max Iterations: %d", self.max_iterations)
+        logger.info("   Temperature:    %.2f", self.config.temperature)
+        logger.info("")
+        logger.info("🎯 Deployment Target:")
+        logger.info("   Repository:     %s", request.repo_url)
+        logger.info("   Mode:           LOCAL (this machine)")
+        logger.info("   Deploy Dir:     %s", request.deploy_dir or "~/app")
+        if host_facts:
+            logger.info("")
+            logger.info("🖥️  Local Host Info:")
+            logger.info("   Hostname:       %s", host_facts.hostname)
+            logger.info("   OS:             %s", host_facts.os_release)
+            logger.info("   Architecture:   %s", host_facts.architecture)
+        if repo_context:
+            logger.info("")
+            logger.info("📦 Repository Analysis:")
+            logger.info("   Project Type:   %s", repo_context.project_type or "unknown")
+            logger.info("   Framework:      %s", repo_context.detected_framework or "none detected")
+            logger.info("   Scripts:        %s", ", ".join(repo_context.detected_scripts) if repo_context.detected_scripts else "none")
+        logger.info("=" * 60)
+        logger.info("")
+        
+        # 初始化日志记录
+        self._init_local_deployment_log(request, host_facts)
+        
+        # 初始化上下文
+        self.history = []
+        self.user_interactions = []
+        context = self._build_local_initial_context(request, host_facts, repo_context)
+        
+        # 记录初始上下文
+        self.deployment_log["context"] = {
+            "repo_url": context.get("repo_url"),
+            "deploy_dir": request.deploy_dir or "~/app",
+            "os": host_facts.os_name if host_facts else platform.system(),
+            "has_repo_analysis": repo_context is not None,
+            "project_type": repo_context.project_type if repo_context else None,
+            "framework": repo_context.detected_framework if repo_context else None,
+        }
+        
+        for iteration in range(1, self.max_iterations + 1):
+            logger.info(f"📍 Iteration {iteration}/{self.max_iterations}")
+            
+            # 让 LLM 决定下一步
+            action = self._think_local(context)
+            
+            # 记录 LLM 的决策
+            step_log = {
+                "iteration": iteration,
+                "timestamp": datetime.now().isoformat(),
+                "action": action.action_type,
+                "command": action.command,
+                "reasoning": action.reasoning,
+                "message": action.message,
+            }
+            
+            if action.action_type == "done":
+                step_log["result"] = "SUCCESS"
+                self.deployment_log["steps"].append(step_log)
+                self.deployment_log["status"] = "success"
+                self.deployment_log["end_time"] = datetime.now().isoformat()
+                self._save_deployment_log()
+                logger.info(f"✅ Agent completed: {action.message}")
+                logger.info(f"📄 Log saved to: {self.current_log_file}")
+                return True
+            
+            if action.action_type == "failed":
+                step_log["result"] = "FAILED"
+                self.deployment_log["steps"].append(step_log)
+                self.deployment_log["status"] = "failed"
+                self.deployment_log["end_time"] = datetime.now().isoformat()
+                self._save_deployment_log()
+                logger.error(f"❌ Agent gave up: {action.message}")
+                logger.info(f"📄 Log saved to: {self.current_log_file}")
+                return False
+            
+            if action.action_type == "execute" and action.command:
+                logger.info(f"🔧 Executing: {action.command}")
+                if action.reasoning:
+                    logger.info(f"   Reason: {action.reasoning}")
+                
+                # 执行本地命令
+                result = self._execute_local_command(local_session, action.command)
+                
+                # 记录命令结果
+                step_log["result"] = {
+                    "success": result.success,
+                    "exit_code": result.exit_code,
+                    "stdout": result.stdout[:2000] if result.stdout else "",
+                    "stderr": result.stderr[:2000] if result.stderr else "",
+                }
+                self.deployment_log["steps"].append(step_log)
+                
+                # 记录到历史
+                self.history.append({
+                    "iteration": iteration,
+                    "reasoning": action.reasoning,
+                    "command": action.command,
+                    "success": result.success,
+                    "exit_code": result.exit_code,
+                    "stdout": result.stdout[:1000] if result.stdout else "",
+                    "stderr": result.stderr[:1000] if result.stderr else "",
+                })
+                
+                # 显示结果
+                status = "✓" if result.success else "✗"
+                logger.info(f"   {status} Exit code: {result.exit_code}")
+                if result.stdout:
+                    logger.debug(f"   stdout: {result.stdout[:200]}")
+                if result.stderr and not result.success:
+                    logger.warning(f"   stderr: {result.stderr[:200]}")
+                
+                self._save_deployment_log()
+            
+            elif action.action_type == "ask_user" and action.question:
+                # 处理用户交互请求
+                logger.info(f"💬 Agent asking user: {action.question[:50]}...")
+                if action.reasoning:
+                    logger.info(f"   Reason: {action.reasoning}")
+                
+                user_response = self._ask_user(action)
+                
+                step_log["question"] = action.question
+                step_log["options"] = action.options
+                step_log["result"] = {
+                    "user_response": user_response.value,
+                    "cancelled": user_response.cancelled,
+                    "is_custom": user_response.is_custom,
+                }
+                self.deployment_log["steps"].append(step_log)
+                
+                if user_response.cancelled:
+                    logger.info("   用户取消了操作")
+                    self.deployment_log["status"] = "cancelled"
+                    self.deployment_log["end_time"] = datetime.now().isoformat()
+                    self._save_deployment_log()
+                    return False
+                
+                self.user_interactions.append({
+                    "iteration": iteration,
+                    "question": action.question,
+                    "options": action.options,
+                    "user_response": user_response.value,
+                    "is_custom": user_response.is_custom,
+                })
+                
+                logger.info(f"   用户回复: {user_response.value}")
+                self._save_deployment_log()
+            
+            else:
+                logger.warning(f"Unknown action: {action.action_type}")
+        
+        self.deployment_log["status"] = "max_iterations"
+        self.deployment_log["end_time"] = datetime.now().isoformat()
+        self._save_deployment_log()
+        logger.error("❌ Agent reached max iterations without completing")
+        logger.info(f"📄 Log saved to: {self.current_log_file}")
+        return False
+
+    def _init_local_deployment_log(self, request: "LocalDeploymentRequest", host_facts: Optional["LocalHostFacts"] = None) -> None:
+        """Initialize a new deployment log file for local deployment."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        repo_name = request.repo_url.split("/")[-1].replace(".git", "")
+        filename = f"deploy_local_{repo_name}_{timestamp}.json"
+        self.current_log_file = self.log_dir / filename
+        
+        self.deployment_log = {
+            "mode": "local",
+            "repo_url": request.repo_url,
+            "target": f"local:{platform.node()}",
+            "deploy_dir": request.deploy_dir or "~/app",
+            "os": host_facts.os_name if host_facts else platform.system(),
+            "start_time": datetime.now().isoformat(),
+            "end_time": None,
+            "status": "running",
+            "config": {
+                "model": self.config.model,
+                "temperature": self.config.temperature,
+                "max_iterations": self.max_iterations,
+                "endpoint": self.base_endpoint,
+            },
+            "context": {},
+            "steps": [],
+        }
+        logger.info(f"📝 Logging to: {self.current_log_file}")
 
     def _init_deployment_log(self, request: "DeploymentRequest") -> None:
         """Initialize a new deployment log file."""
@@ -215,6 +523,12 @@ class DeploymentAgent:
             "start_time": datetime.now().isoformat(),
             "end_time": None,
             "status": "running",
+            "config": {
+                "model": self.config.model,
+                "temperature": self.config.temperature,
+                "max_iterations": self.max_iterations,
+                "endpoint": self.base_endpoint,
+            },
             "context": {},
             "steps": [],
         }
@@ -225,6 +539,264 @@ class DeploymentAgent:
         if self.current_log_file:
             with open(self.current_log_file, "w", encoding="utf-8") as f:
                 json.dump(self.deployment_log, f, indent=2, ensure_ascii=False)
+
+    def _build_local_initial_context(
+        self,
+        request: "LocalDeploymentRequest",
+        host_facts: Optional["LocalHostFacts"],
+        repo_context: Optional["RepoContext"] = None,
+    ) -> dict:
+        """Build the initial context for local deployment."""
+        ctx = {
+            "repo_url": request.repo_url,
+            "deploy_dir": request.deploy_dir or "~/app",
+            "mode": "local",
+            "local_host": host_facts.to_payload() if host_facts else {
+                "os_name": platform.system(),
+                "os_release": platform.platform(),
+            },
+        }
+        
+        # 添加预分析的仓库信息
+        if repo_context:
+            ctx["repo_analysis"] = repo_context.to_prompt_context()
+            ctx["project_type"] = repo_context.project_type
+            ctx["framework"] = repo_context.detected_framework
+            ctx["scripts"] = repo_context.detected_scripts
+        
+        return ctx
+
+    def _execute_local_command(self, session: "LocalSession", command: str) -> CommandResult:
+        """Execute a command locally."""
+        try:
+            result = session.run(command, timeout=300)  # 本地命令给更长超时
+            return CommandResult(
+                command=command,
+                success=result.ok,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                exit_code=result.exit_status,
+            )
+        except Exception as exc:
+            return CommandResult(
+                command=command,
+                success=False,
+                stdout="",
+                stderr=str(exc),
+                exit_code=-1,
+            )
+
+    def _think_local(self, context: dict) -> AgentAction:
+        """Ask LLM to decide the next action for local deployment."""
+        import time
+        
+        prompt = self._build_local_prompt(context)
+        
+        url = f"{self.base_endpoint}?key={self.config.api_key}"
+        body = {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": self.config.temperature,
+                "responseMimeType": "application/json",
+            },
+        }
+        
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self.session.post(url, json=body, timeout=60)
+                
+                if response.status_code == 429:
+                    wait_time = 30 * (attempt + 1)
+                    logger.warning(f"Rate limited. Waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
+                    continue
+                    
+                response.raise_for_status()
+                data = response.json()
+                
+                candidates = data.get("candidates") or []
+                for candidate in candidates:
+                    parts = candidate.get("content", {}).get("parts", [])
+                    for part in parts:
+                        text = part.get("text")
+                        if text:
+                            return self._parse_action(text)
+                
+                logger.error("No response from LLM")
+                return AgentAction(action_type="failed", message="No LLM response")
+                
+            except requests.exceptions.HTTPError as e:
+                if response.status_code == 429 and attempt < max_retries - 1:
+                    wait_time = 30 * (attempt + 1)
+                    logger.warning(f"Rate limited. Waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
+                    continue
+                logger.error(f"LLM API call failed: {e}")
+                return AgentAction(action_type="failed", message=str(e))
+            except Exception as exc:
+                logger.error(f"LLM API call failed: {exc}")
+                return AgentAction(action_type="failed", message=str(exc))
+        
+        return AgentAction(action_type="failed", message="Rate limited after max retries")
+
+    def _build_local_prompt(self, context: dict) -> str:
+        """Build the prompt for local deployment."""
+        
+        os_name = context.get("local_host", {}).get("os_name", platform.system())
+        is_windows = os_name == "Windows"
+        
+        has_repo_analysis = "repo_analysis" in context
+        
+        # 用户交互说明
+        user_interaction_guide = """
+# 🗣️ User Interaction
+You can ask the user for input when needed:
+```json
+{
+  "action": "ask_user",
+  "question": "Which port should the app run on?",
+  "options": ["3000", "8080", "5000"],
+  "input_type": "choice",
+  "category": "decision",
+  "reasoning": "Multiple ports available"
+}
+```
+"""
+
+        if is_windows:
+            system_prompt = f"""# Role
+You are an autonomous DevOps deployment agent. You execute **PowerShell commands** on a **Windows** machine to deploy applications.
+
+# Goal  
+Deploy the given repository locally and ensure the application is running.
+
+# Environment
+- Operating System: Windows ({os_name})
+- Shell: PowerShell
+- Commands you output will be executed via PowerShell
+- Working directory is user's home folder
+- Deploy to: {context.get('deploy_dir', '~/app')}
+
+# Available Actions
+Respond with JSON:
+```json
+{{"action": "execute", "command": "PowerShell command", "reasoning": "why"}}
+{{"action": "done", "message": "success message"}}
+{{"action": "failed", "message": "error message"}}
+{{"action": "ask_user", "question": "...", "options": [...], "input_type": "choice"}}
+```
+
+# ⚠️ Windows PowerShell Commands
+Use PowerShell syntax:
+- Clone: `git clone <repo> $env:USERPROFILE\\app`
+- Remove folder: `Remove-Item -Recurse -Force $env:USERPROFILE\\app`
+- Install npm: `npm install`
+- Run background: `Start-Process -NoNewWindow -FilePath "npm" -ArgumentList "start" -RedirectStandardOutput "app.log"`
+- Check process: `Get-Process -Name node -ErrorAction SilentlyContinue`
+- Read file: `Get-Content package.json`
+- Check port: `netstat -ano | findstr :3000`
+- Kill process: `Stop-Process -Id <PID> -Force`
+- Environment: `$env:VARNAME = "value"`
+
+# CRITICAL RULES
+1. Use PowerShell syntax, NOT bash/Linux commands!
+2. Use `$env:USERPROFILE` instead of `~` for home directory
+3. For long-running servers, use `Start-Process` with `-NoNewWindow`
+4. Path separators: use `\\` or `/` (PowerShell accepts both)
+""" + user_interaction_guide
+        else:
+            system_prompt = f"""# Role
+You are an autonomous DevOps deployment agent. You execute shell commands on a **{os_name}** machine to deploy applications.
+
+# Goal  
+Deploy the given repository locally and ensure the application is running.
+
+# Environment
+- Operating System: {os_name}
+- Shell: bash
+- Commands you output will be executed directly
+- Working directory is user's home folder
+- Deploy to: {context.get('deploy_dir', '~/app')}
+
+# Available Actions
+Respond with JSON:
+```json
+{{"action": "execute", "command": "shell command", "reasoning": "why"}}
+{{"action": "done", "message": "success message"}}
+{{"action": "failed", "message": "error message"}}
+{{"action": "ask_user", "question": "...", "options": [...], "input_type": "choice"}}
+```
+
+# CRITICAL RULES
+1. For servers, use nohup: `nohup npm start > app.log 2>&1 &`
+2. Wait after starting: `sleep 3`
+3. Verify with curl: `curl -s http://localhost:<port>`
+""" + user_interaction_guide
+
+        # 构建当前状态
+        state = {
+            "repo_url": context.get("repo_url"),
+            "deploy_dir": context.get("deploy_dir"),
+            "os": os_name,
+            "command_history": self.history[-10:],
+        }
+        
+        if self.user_interactions:
+            state["user_interactions"] = self.user_interactions[-5:]
+        
+        parts = [system_prompt, "\n---\n"]
+        
+        if has_repo_analysis:
+            parts.append("# Pre-Analyzed Repository Context")
+            parts.append(context["repo_analysis"])
+            parts.append("\n---\n")
+        
+        parts.append("# Current State")
+        parts.append(f"```json\n{json.dumps(state, indent=2, ensure_ascii=False)}\n```")
+        
+        if self.user_interactions:
+            last_interaction = self.user_interactions[-1]
+            parts.append(f"\n⚠️ User responded: \"{last_interaction['user_response']}\"")
+        
+        parts.append("\nDecide your next action. Respond with JSON only.")
+        
+        return "\n".join(parts)
+
+    def _ask_user(self, action: AgentAction) -> InteractionResponse:
+        """Ask user for input based on agent's request."""
+        # 映射 input_type
+        input_type_map = {
+            "choice": InputType.CHOICE,
+            "text": InputType.TEXT,
+            "confirm": InputType.CONFIRM,
+            "secret": InputType.SECRET,
+        }
+        input_type = input_type_map.get(action.input_type, InputType.CHOICE)
+        
+        # 映射 category
+        category_map = {
+            "decision": QuestionCategory.DECISION,
+            "confirmation": QuestionCategory.CONFIRMATION,
+            "information": QuestionCategory.INFORMATION,
+            "error_recovery": QuestionCategory.ERROR_RECOVERY,
+            "custom": QuestionCategory.CUSTOM,
+        }
+        category = category_map.get(action.category, QuestionCategory.DECISION)
+        
+        # 创建交互请求
+        request = InteractionRequest(
+            question=action.question or "",
+            input_type=input_type,
+            options=action.options or [],
+            category=category,
+            context=action.context,
+            default=action.default_option,
+            allow_custom=True,
+        )
+        
+        # 使用交互处理器获取用户响应
+        return self.interaction_handler.ask(request)
 
     def _think(self, context: dict) -> AgentAction:
         """Ask LLM to decide the next action."""
@@ -292,6 +864,13 @@ class DeploymentAgent:
                 command=data.get("command"),
                 reasoning=data.get("reasoning"),
                 message=data.get("message"),
+                # 用户交互相关字段
+                question=data.get("question"),
+                options=data.get("options"),
+                input_type=data.get("input_type", "choice"),
+                category=data.get("category", "decision"),
+                context=data.get("context"),
+                default_option=data.get("default"),
             )
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM response: {e}")
@@ -345,10 +924,53 @@ class DeploymentAgent:
         # 检查是否有预分析的仓库信息
         has_repo_analysis = "repo_analysis" in context
         
+        # 用户交互说明（两种模式共用）
+        user_interaction_guide = """
+# 🗣️ User Interaction (IMPORTANT!)
+You can ask the user for input when you encounter:
+- **Multiple choices**: Different deployment options (dev/prod mode, ports, etc.)
+- **Missing information**: Environment variables, configuration values
+- **Confirmation needed**: Before risky operations (deleting data, overwriting)
+- **Error recovery**: When stuck, ask user for guidance
+
+To ask user, use action="ask_user" with this format:
+```json
+{
+  "action": "ask_user",
+  "question": "Clear question for the user",
+  "options": ["Option 1", "Option 2", "Option 3"],  
+  "input_type": "choice",
+  "category": "decision",
+  "context": "Additional context to help user decide",
+  "default": "Option 1",
+  "reasoning": "Why you need user input"
+}
+```
+
+**input_type options:**
+- "choice": User selects from options (can also input custom value)
+- "text": Free text input
+- "confirm": Yes/No confirmation
+- "secret": Sensitive input (password, API key)
+
+**category options:**
+- "decision": Deployment choices (port, mode, entry point)
+- "confirmation": Confirm risky operations
+- "information": Need additional info (env vars)
+- "error_recovery": Stuck and need user help
+
+**When to ask user (主动询问):**
+1. Multiple npm scripts available → Ask which to use
+2. Unclear which port the app uses → Ask user
+3. Need environment variables → Ask for values
+4. Before `rm -rf` on existing deployment → Confirm
+5. Deployment keeps failing → Ask user for guidance
+"""
+
         # 构建系统提示词 - 根据是否有预分析调整
         if has_repo_analysis:
             system_prompt = """# Role
-You are an autonomous DevOps deployment agent. You execute shell commands on a remote Linux server via SSH to deploy applications.
+You are an autonomous DevOps deployment agent. You execute shell commands on a remote Linux server via SSH to deploy applications. You can also interact with the user to get guidance.
 
 # Goal  
 Deploy the given repository and ensure the application is running and accessible. Success = application responds to HTTP requests with actual content.
@@ -359,6 +981,7 @@ Deploy the given repository and ensure the application is running and accessible
 - You will see the stdout, stderr, and exit code of each command
 - sudo is available (password handled automatically)
 - Common tools: git, npm, node, python3, pip, curl, systemctl, pm2
+- **You can ask the user for input when needed!**
 
 # ⭐ IMPORTANT: Repository Analysis Provided
 You have been given a **pre-analyzed repository context** below. Use this information to make informed decisions:
@@ -370,35 +993,61 @@ You have been given a **pre-analyzed repository context** below. Use this inform
 **Do NOT waste iterations re-analyzing the repository!** Use the provided information directly.
 
 # Available Actions
-You must respond with JSON in this exact format:
+You must respond with JSON in one of these formats:
+
+**Execute a command:**
 ```json
 {
-  "action": "execute" | "done" | "failed",
-  "command": "shell command to run (required if action=execute)",
-  "reasoning": "brief explanation of your decision",
-  "message": "final status message (required if action=done or failed)"
+  "action": "execute",
+  "command": "shell command to run",
+  "reasoning": "brief explanation"
 }
 ```
 
-# Decision Rules
-1. **execute**: Run a shell command and observe the result
-2. **done**: Deployment successful - app is verified running AND curl returned actual content
-3. **failed**: Deployment impossible after reasonable attempts
+**Ask user for input:**
+```json
+{
+  "action": "ask_user",
+  "question": "What would you like me to do?",
+  "options": ["Option 1", "Option 2"],
+  "input_type": "choice",
+  "category": "decision",
+  "reasoning": "why asking user"
+}
+```
 
+**Complete deployment:**
+```json
+{
+  "action": "done",
+  "message": "Deployment successful - app running on port 3000"
+}
+```
+
+**Give up:**
+```json
+{
+  "action": "failed",
+  "message": "Cannot deploy because..."
+}
+```
+""" + user_interaction_guide + """
 # ⚠️ CRITICAL RULES (MUST FOLLOW)
 1. **NEVER run server commands directly!** Commands like `npm run dev`, `npm start`, `python app.py` will BLOCK FOREVER.
 2. **ALWAYS use nohup for servers**: `nohup <cmd> > app.log 2>&1 &`
 3. **Verification MUST show actual content!** Empty curl response = FAILURE, not success!
 4. **Check app.log if curl fails** to see error messages.
 5. **Use the pre-analyzed info!** Don't cat files that are already provided.
+6. **Ask user when uncertain!** Multiple options? Ask! Stuck? Ask!
 
 # Deployment Flow (with pre-analysis)
 1. Clone: `rm -rf ~/app && git clone <repo> ~/app`
-2. Install dependencies (based on pre-analyzed project type)
-3. Start server IN BACKGROUND (use correct command from package.json scripts or framework knowledge)
-4. Wait: `sleep 5`
-5. Verify: `curl -s http://localhost:<port>`
-6. If empty, check logs: `cat ~/app/app.log`
+2. If multiple scripts available → **Ask user which to run**
+3. Install dependencies (based on pre-analyzed project type)
+4. Start server IN BACKGROUND (use correct command from package.json scripts or framework knowledge)
+5. Wait: `sleep 5`
+6. Verify: `curl -s http://localhost:<port>`
+7. If empty, check logs: `cat ~/app/app.log`
 
 # Common Ports
 - VitePress/Vite: 5173
@@ -413,11 +1062,12 @@ You must respond with JSON in this exact format:
 - "port already in use" → kill existing process: `lsof -ti:<port> | xargs kill -9`
 - "permission denied" → use sudo
 - "module not found" → install dependencies
-- Empty curl response → Server failed to start! Check app.log"""
+- Empty curl response → Server failed to start! Check app.log
+- Stuck after 3 failed attempts → **Ask user for help!**"""
         else:
             # 没有预分析时的 prompt（需要自己探索）
             system_prompt = """# Role
-You are an autonomous DevOps deployment agent. You execute shell commands on a remote Linux server via SSH to deploy applications.
+You are an autonomous DevOps deployment agent. You execute shell commands on a remote Linux server via SSH to deploy applications. You can also interact with the user to get guidance.
 
 # Goal  
 Deploy the given repository and ensure the application is running and accessible. Success = application responds to HTTP requests with actual content.
@@ -428,18 +1078,40 @@ Deploy the given repository and ensure the application is running and accessible
 - You will see the stdout, stderr, and exit code of each command
 - sudo is available (password handled automatically)
 - Common tools: git, npm, node, python3, pip, curl, systemctl, pm2
+- **You can ask the user for input when needed!**
 
 # Available Actions
-You must respond with JSON in this exact format:
+You must respond with JSON in one of these formats:
+
+**Execute a command:**
 ```json
 {
-  "action": "execute" | "done" | "failed",
-  "command": "shell command to run (required if action=execute)",
-  "reasoning": "brief explanation of your decision",
-  "message": "final status message (required if action=done or failed)"
+  "action": "execute",
+  "command": "shell command to run",
+  "reasoning": "brief explanation"
 }
 ```
 
+**Ask user for input:**
+```json
+{
+  "action": "ask_user",
+  "question": "What would you like me to do?",
+  "options": ["Option 1", "Option 2"],
+  "input_type": "choice",
+  "category": "decision",
+  "reasoning": "why asking user"
+}
+```
+
+**Complete or give up:**
+```json
+{
+  "action": "done" | "failed",
+  "message": "status message"
+}
+```
+""" + user_interaction_guide + """
 # ⚠️ CRITICAL RULES (MUST FOLLOW)
 1. **ALWAYS analyze the repository FIRST** after cloning! Check package.json OR requirements.txt to determine project type.
 2. **NEVER assume project type!** A repo might have package.json but be a Python project.
@@ -447,14 +1119,16 @@ You must respond with JSON in this exact format:
 4. **ALWAYS use nohup for servers**: `nohup <cmd> > app.log 2>&1 &`
 5. **Verification MUST show actual content!** Empty curl response = FAILURE, not success!
 6. **Check app.log if curl fails** to see error messages.
+7. **Ask user when uncertain!** Multiple options? Ask! Stuck? Ask!
 
 # Deployment Flow
 1. Clone: `rm -rf ~/app && git clone <repo> ~/app`
 2. **ANALYZE FIRST**: `cat ~/app/package.json 2>/dev/null || cat ~/app/requirements.txt 2>/dev/null || ls ~/app`
-3. Install dependencies based on project type
-4. Start server IN BACKGROUND
-5. Wait: `sleep 5`
-6. Verify: `curl -s http://localhost:<port>`
+3. If multiple scripts available → **Ask user which to run**
+4. Install dependencies based on project type
+5. Start server IN BACKGROUND
+6. Wait: `sleep 5`
+7. Verify: `curl -s http://localhost:<port>`
 
 # Common Ports
 - VitePress/Vite: 5173
@@ -473,6 +1147,10 @@ You must respond with JSON in this exact format:
             "command_history": self.history[-10:],  # 最近10条命令历史
         }
         
+        # 添加用户交互历史（如果有）
+        if self.user_interactions:
+            state["user_interactions"] = self.user_interactions[-5:]  # 最近5次用户交互
+        
         # 组合最终 prompt
         parts = [system_prompt, "\n---\n"]
         
@@ -484,6 +1162,13 @@ You must respond with JSON in this exact format:
         
         parts.append("# Current Deployment State")
         parts.append(f"```json\n{json.dumps(state, indent=2, ensure_ascii=False)}\n```")
+        
+        # 如果有最近的用户交互，提醒 LLM
+        if self.user_interactions:
+            last_interaction = self.user_interactions[-1]
+            parts.append(f"\n⚠️ User just responded: \"{last_interaction['user_response']}\" to your question about: \"{last_interaction['question'][:50]}...\"")
+            parts.append("Use this information to proceed!")
+        
         parts.append("\nBased on the above information, decide your next action. Respond with JSON only.")
         
         return "\n".join(parts)
