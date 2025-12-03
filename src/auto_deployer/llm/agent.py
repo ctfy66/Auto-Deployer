@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from ..ssh import SSHSession
     from ..local import LocalSession, LocalHostFacts
     from ..analyzer import RepoContext
+    from ..knowledge import ExperienceRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +73,10 @@ class DeploymentAgent:
     def __init__(
         self,
         config: LLMConfig,
-        max_iterations: int = 20,
+        max_iterations: int = 30,
         log_dir: Optional[str] = None,
         interaction_handler: Optional[UserInteractionHandler] = None,
+        experience_retriever: Optional["ExperienceRetriever"] = None,
     ) -> None:
         if not config.api_key:
             raise ValueError("Agent requires an API key")
@@ -84,6 +86,9 @@ class DeploymentAgent:
         
         # 用户交互处理器 - 默认使用 CLI
         self.interaction_handler = interaction_handler or CLIInteractionHandler()
+        
+        # 经验检索器（可选）
+        self.experience_retriever = experience_retriever
         
         # 日志目录
         self.log_dir = Path(log_dir) if log_dir else Path.cwd() / "agent_logs"
@@ -921,10 +926,7 @@ Respond with JSON:
     def _build_prompt(self, context: dict) -> str:
         """Build the prompt for the LLM agent."""
         
-        # 检查是否有预分析的仓库信息
-        has_repo_analysis = "repo_analysis" in context
-        
-        # 用户交互说明（两种模式共用）
+        # 用户交互说明
         user_interaction_guide = """
 # 🗣️ User Interaction (IMPORTANT!)
 You can ask the user for input when you encounter:
@@ -967,175 +969,130 @@ To ask user, use action="ask_user" with this format:
 5. Deployment keeps failing → Ask user for guidance
 """
 
-        # 构建系统提示词 - 根据是否有预分析调整
-        if has_repo_analysis:
-            system_prompt = """# Role
-You are an autonomous DevOps deployment agent. You execute shell commands on a remote Linux server via SSH to deploy applications. You can also interact with the user to get guidance.
+        # 构建系统提示词
+        system_prompt = """# Role
+You are an intelligent, autonomous DevOps deployment agent. You have full SSH access to a remote Linux server and can execute any shell commands to deploy applications.
 
 # Goal  
-Deploy the given repository and ensure the application is running and accessible. Success = application responds to HTTP requests with actual content.
+Deploy the given repository and ensure the application is running and accessible.
+**Success criteria**: Application responds to HTTP requests with actual content.
 
-# Environment
-- You have SSH access to a remote Linux server
-- Commands you output will be executed directly on the remote server
-- You will see the stdout, stderr, and exit code of each command
-- sudo is available (password handled automatically)
-- Common tools: git, npm, node, python3, pip, curl, systemctl, pm2
-- **You can ask the user for input when needed!**
+# Your Capabilities
+- Full SSH access to a Linux server
+- sudo available (password handled automatically)
+- Can execute ANY shell command
+- Can install software, configure services, manage Docker, etc.
+- Can ask the user for input when needed
 
-# ⭐ IMPORTANT: Repository Analysis Provided
-You have been given a **pre-analyzed repository context** below. Use this information to make informed decisions:
-- Project type and framework are already identified
-- Key configuration files (package.json, requirements.txt, Dockerfile, etc.) are provided
-- Available scripts and dependencies are listed
-- Directory structure is shown
+# 🧠 THINK LIKE AN EXPERT DEVOPS ENGINEER
+You are NOT limited to a fixed deployment script. Analyze the project and **choose the best deployment strategy**:
 
-**Do NOT waste iterations re-analyzing the repository!** Use the provided information directly.
+## Strategy 1: Docker Compose (BEST for complex projects)
+If you see `docker-compose.yml` or `docker-compose.yaml`:
+```bash
+cd ~/app && docker-compose up -d --build
+```
+- Handles ALL dependencies automatically
+- Multi-service projects work out of the box
+- Just verify with `docker-compose ps` and `curl`
 
-# Available Actions
-You must respond with JSON in one of these formats:
-
-**Execute a command:**
-```json
-{
-  "action": "execute",
-  "command": "shell command to run",
-  "reasoning": "brief explanation"
-}
+## Strategy 2: Docker (if only Dockerfile)
+If you see `Dockerfile` but no compose file:
+```bash
+cd ~/app && docker build -t myapp . && docker run -d -p <port>:<port> myapp
 ```
 
-**Ask user for input:**
+## Strategy 3: Traditional (if no Docker)
+Only if no Docker files exist:
+- Install dependencies (`pip install` / `npm install`)
+- Start with process manager or nohup
+
+## Strategy 4: Static Site
+If it's just HTML/CSS/JS:
+- Serve with nginx or python -m http.server
+
+# 📋 Pre-Analyzed Repository Info
+You have been given analyzed repository context below. Key things to look for:
+- **Dockerfile / docker-compose.yml** → Use Docker!
+- **config.py.example / .env.example** → Need to copy/configure first
+- **Multiple entry points** → May need PM2 or supervisor
+- **Complex dependencies** → Docker is your friend
+
+# Available Actions (JSON response)
+
+**Execute command:**
 ```json
-{
-  "action": "ask_user",
-  "question": "What would you like me to do?",
-  "options": ["Option 1", "Option 2"],
-  "input_type": "choice",
-  "category": "decision",
-  "reasoning": "why asking user"
-}
+{"action": "execute", "command": "your command", "reasoning": "why"}
 ```
 
-**Complete deployment:**
+**Ask user (when uncertain):**
 ```json
-{
-  "action": "done",
-  "message": "Deployment successful - app running on port 3000"
-}
+{"action": "ask_user", "question": "...", "options": [...], "input_type": "choice", "category": "decision"}
 ```
 
-**Give up:**
+**Done:**
 ```json
-{
-  "action": "failed",
-  "message": "Cannot deploy because..."
-}
-```
-""" + user_interaction_guide + """
-# ⚠️ CRITICAL RULES (MUST FOLLOW)
-1. **NEVER run server commands directly!** Commands like `npm run dev`, `npm start`, `python app.py` will BLOCK FOREVER.
-2. **ALWAYS use nohup for servers**: `nohup <cmd> > app.log 2>&1 &`
-3. **Verification MUST show actual content!** Empty curl response = FAILURE, not success!
-4. **Check app.log if curl fails** to see error messages.
-5. **Use the pre-analyzed info!** Don't cat files that are already provided.
-6. **Ask user when uncertain!** Multiple options? Ask! Stuck? Ask!
-
-# Deployment Flow (with pre-analysis)
-1. Clone: `rm -rf ~/app && git clone <repo> ~/app`
-2. If multiple scripts available → **Ask user which to run**
-3. Install dependencies (based on pre-analyzed project type)
-4. Start server IN BACKGROUND (use correct command from package.json scripts or framework knowledge)
-5. Wait: `sleep 5`
-6. Verify: `curl -s http://localhost:<port>`
-7. If empty, check logs: `cat ~/app/app.log`
-
-# Common Ports
-- VitePress/Vite: 5173
-- React (CRA): 3000
-- Next.js: 3000
-- Flask: 5000
-- Django: 8000
-- Express: 3000
-
-# Error Handling
-- "command not found" → install the tool or check PATH
-- "port already in use" → kill existing process: `lsof -ti:<port> | xargs kill -9`
-- "permission denied" → use sudo
-- "module not found" → install dependencies
-- Empty curl response → Server failed to start! Check app.log
-- Stuck after 3 failed attempts → **Ask user for help!**"""
-        else:
-            # 没有预分析时的 prompt（需要自己探索）
-            system_prompt = """# Role
-You are an autonomous DevOps deployment agent. You execute shell commands on a remote Linux server via SSH to deploy applications. You can also interact with the user to get guidance.
-
-# Goal  
-Deploy the given repository and ensure the application is running and accessible. Success = application responds to HTTP requests with actual content.
-
-# Environment
-- You have SSH access to a remote Linux server
-- Commands you output will be executed directly on the remote server
-- You will see the stdout, stderr, and exit code of each command
-- sudo is available (password handled automatically)
-- Common tools: git, npm, node, python3, pip, curl, systemctl, pm2
-- **You can ask the user for input when needed!**
-
-# Available Actions
-You must respond with JSON in one of these formats:
-
-**Execute a command:**
-```json
-{
-  "action": "execute",
-  "command": "shell command to run",
-  "reasoning": "brief explanation"
-}
+{"action": "done", "message": "Deployed successfully on port X"}
 ```
 
-**Ask user for input:**
+**Failed:**
 ```json
-{
-  "action": "ask_user",
-  "question": "What would you like me to do?",
-  "options": ["Option 1", "Option 2"],
-  "input_type": "choice",
-  "category": "decision",
-  "reasoning": "why asking user"
-}
+{"action": "failed", "message": "Cannot deploy because..."}
 ```
 
-**Complete or give up:**
-```json
-{
-  "action": "done" | "failed",
-  "message": "status message"
+# ⚠️ Critical Constraints
+1. **Long-running commands BLOCK FOREVER** - Use `nohup ... &` or Docker `-d`
+2. **Verification needs actual content** - Empty curl = failure
+3. **Ask user when stuck** - Don't waste iterations on trial-and-error
+
+# 🔧 Error Diagnosis & Self-Correction
+
+**If you see `sudo: X incorrect password attempts`:**
+ROOT CAUSE: sudo password is passed via stdin, but something else in your command also consumed stdin (pipes, heredoc, interactive input).
+PRINCIPLE: When using sudo, ensure no other part of the command competes for stdin.
+SOLUTION: Split into separate commands - first prepare data/download files, then run sudo on the result.
+
+**If command seems to hang forever:**
+ROOT CAUSE: You ran a blocking foreground process.
+SOLUTION: Use background execution (`nohup ... &`, `... &`, or Docker `-d`).
+
+# �️ Shell Best Practices
+
+## Writing config files with sudo
+✅ RECOMMENDED: Use `sudo bash -c` with heredoc inside single quotes:
+```bash
+sudo bash -c 'cat > /etc/nginx/sites-available/mysite <<EOF
+server {
+    listen 80;
+    ...
 }
+EOF'
 ```
-""" + user_interaction_guide + """
-# ⚠️ CRITICAL RULES (MUST FOLLOW)
-1. **ALWAYS analyze the repository FIRST** after cloning! Check package.json OR requirements.txt to determine project type.
-2. **NEVER assume project type!** A repo might have package.json but be a Python project.
-3. **NEVER run server commands directly!** Commands like `npm run dev`, `npm start`, `python app.py` will BLOCK FOREVER.
-4. **ALWAYS use nohup for servers**: `nohup <cmd> > app.log 2>&1 &`
-5. **Verification MUST show actual content!** Empty curl response = FAILURE, not success!
-6. **Check app.log if curl fails** to see error messages.
-7. **Ask user when uncertain!** Multiple options? Ask! Stuck? Ask!
+This keeps the heredoc inside bash's stdin, separate from sudo's password input.
 
-# Deployment Flow
-1. Clone: `rm -rf ~/app && git clone <repo> ~/app`
-2. **ANALYZE FIRST**: `cat ~/app/package.json 2>/dev/null || cat ~/app/requirements.txt 2>/dev/null || ls ~/app`
-3. If multiple scripts available → **Ask user which to run**
-4. Install dependencies based on project type
-5. Start server IN BACKGROUND
-6. Wait: `sleep 5`
-7. Verify: `curl -s http://localhost:<port>`
+❌ AVOID: `sudo tee <<EOF` or `echo "..." | sudo tee` (stdin conflicts with password)
 
-# Common Ports
-- VitePress/Vite: 5173
-- React (CRA): 3000
-- Next.js: 3000
-- Flask: 5000
-- Django: 8000"""
+## Downloading scripts that need sudo
+❌ WRONG: `curl ... | sudo bash` (stdin conflict)
+✅ CORRECT: `curl -o script.sh ... && sudo bash script.sh`
+
+## Idempotent commands (safe to re-run)
+- Use `ln -sf` instead of `ln -s` (force overwrite existing symlink)
+- Use `mkdir -p` instead of `mkdir` (no error if exists)
+- Use `rm -f` instead of `rm` (no error if not exists)
+- Use `git clone` with check: `test -d /path || git clone ...`
+
+## Nginx try_files for static sites
+✅ CORRECT: `try_files $uri $uri/index.html /index.html;`
+❌ WRONG: `try_files $uri /index.html;` (needs at least 2 args + fallback)
+
+# �💡 Decision Making Guide
+- See `docker-compose.yml`? → `docker-compose up -d` (DON'T pip install!)
+- See `Dockerfile`? → `docker build && docker run`
+- See `config.example`? → Copy it first, or ask user for values
+- See complex project structure? → Docker is probably the answer
+- Keep failing? → Ask user for guidance, don't just retry the same thing
+"""
 
         # 构建当前状态
         state = {
@@ -1154,8 +1111,25 @@ You must respond with JSON in one of these formats:
         # 组合最终 prompt
         parts = [system_prompt, "\n---\n"]
         
+        # 添加过去的部署经验（如果有）
+        if self.experience_retriever:
+            try:
+                project_type = context.get("project_type")
+                framework = context.get("framework")
+                experiences_text = self.experience_retriever.get_formatted_experiences(
+                    project_type=project_type,
+                    framework=framework,
+                    max_results=10,
+                    max_length=2000
+                )
+                if experiences_text:
+                    parts.append(experiences_text)
+                    parts.append("\n---\n")
+            except Exception as e:
+                logger.warning(f"Failed to retrieve experiences: {e}")
+        
         # 添加预分析的仓库上下文
-        if has_repo_analysis:
+        if "repo_analysis" in context:
             parts.append("# Pre-Analyzed Repository Context")
             parts.append(context["repo_analysis"])
             parts.append("\n---\n")

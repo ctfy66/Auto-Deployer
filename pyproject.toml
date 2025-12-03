@@ -22,6 +22,16 @@ classifiers = [
   "Operating System :: OS Independent"
 ]
 
+[project.optional-dependencies]
+memory = [
+  "chromadb>=0.4.0",
+  "sentence-transformers>=2.2.0"
+]
+all = [
+  "chromadb>=0.4.0",
+  "sentence-transformers>=2.2.0"
+]
+
 [project.scripts]
 auto-deployer = "auto_deployer.main:app_main"
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
@@ -180,10 +181,16 @@ class DeploymentWorkflow:
         if repo_context:
             logger.info("   (with pre-analyzed repository context)")
         
+        # 尝试加载经验检索器
+        experience_retriever = self._get_experience_retriever()
+        if experience_retriever:
+            logger.info("   🧠 Memory enabled - using past deployment experiences")
+        
         agent = DeploymentAgent(
             self.config.llm,
             max_iterations=self.config.agent.max_iterations,
             interaction_handler=self.interaction_handler,
+            experience_retriever=experience_retriever,
         )
         success = agent.deploy_local(request, host_facts, session, repo_context)
         
@@ -206,10 +213,16 @@ class DeploymentWorkflow:
         if repo_context:
             logger.info("   (with pre-analyzed repository context)")
         
+        # 尝试加载经验检索器
+        experience_retriever = self._get_experience_retriever()
+        if experience_retriever:
+            logger.info("   🧠 Memory enabled - using past deployment experiences")
+        
         agent = DeploymentAgent(
             self.config.llm,
             max_iterations=self.config.agent.max_iterations,
             interaction_handler=self.interaction_handler,
+            experience_retriever=experience_retriever,
         )
         success = agent.deploy(request, host_facts, session, repo_context)
         
@@ -217,6 +230,21 @@ class DeploymentWorkflow:
             logger.info("🎉 Agent deployment completed successfully!")
         else:
             logger.error("💥 Agent deployment failed")
+    
+    def _get_experience_retriever(self):
+        """尝试获取经验检索器，如果依赖未安装则返回 None"""
+        try:
+            from .knowledge import ExperienceStore, ExperienceRetriever
+            store = ExperienceStore()
+            # 检查是否有已精炼的经验
+            if store.refined_count() > 0:
+                return ExperienceRetriever(store)
+        except ImportError:
+            # chromadb 或 sentence-transformers 未安装
+            pass
+        except Exception as e:
+            logging.debug(f"Failed to load experience retriever: {e}")
+        return None
 
     def _create_remote_session(self, request: DeploymentRequest) -> Optional[SSHSession]:
         """Create an SSH session to the remote server."""

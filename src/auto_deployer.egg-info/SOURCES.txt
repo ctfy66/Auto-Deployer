@@ -19,6 +19,9 @@ src/auto_deployer/interaction/__init__.py
 src/auto_deployer/interaction/handler.py
 src/auto_deployer/llm/__init__.py
 src/auto_deployer/llm/agent.py
+src/auto_deployer/local/__init__.py
+src/auto_deployer/local/probe.py
+src/auto_deployer/local/session.py
 src/auto_deployer/ssh/__init__.py
 src/auto_deployer/ssh/credentials.py
 src/auto_deployer/ssh/probe.py

@@ -89,6 +89,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show summary only (not full output)"
     )
 
+    # memory 子命令 - 管理知识库
+    memory_parser = subparsers.add_parser(
+        "memory", help="Manage agent's experience memory"
+    )
+    memory_parser.add_argument(
+        "--status", action="store_true",
+        help="Show memory status and statistics"
+    )
+    memory_parser.add_argument(
+        "--extract", action="store_true",
+        help="Extract experiences from deployment logs"
+    )
+    memory_parser.add_argument(
+        "--refine", action="store_true",
+        help="Refine raw experiences using LLM"
+    )
+    memory_parser.add_argument(
+        "--list", "-l", action="store_true", dest="list_experiences",
+        help="List all stored experiences"
+    )
+    memory_parser.add_argument(
+        "--show", type=int, metavar="N",
+        help="Show detailed view of experience #N"
+    )
+    memory_parser.add_argument(
+        "--export", choices=["json", "markdown", "md"],
+        help="Export memories to human-readable file (json/markdown)"
+    )
+    memory_parser.add_argument(
+        "--clear", action="store_true",
+        help="Clear all stored experiences (with confirmation)"
+    )
+
     return parser
 
 
@@ -233,12 +266,368 @@ def show_log_file(log_file: Path, summary_only: bool = False) -> None:
     print(f"{'='*60}\n")
 
 
+def handle_memory_command(args: argparse.Namespace, context: CLIContext) -> int:
+    """Handle the memory subcommand."""
+    from .knowledge import ExperienceStore, ExperienceExtractor, ExperienceRefiner
+    from .paths import get_memory_dir
+    
+    store = ExperienceStore()
+    
+    if args.status:
+        # 显示状态
+        try:
+            stats = store.get_stats()
+            print(f"\n{'='*50}")
+            print("🧠 Agent Memory Status")
+            print(f"{'='*50}")
+            print(f"📁 Storage:         {stats['persist_dir']}")
+            print(f"📥 Raw experiences: {stats['raw_count']}")
+            print(f"   └ Unprocessed:   {stats['unprocessed_count']}")
+            print(f"📊 Refined:         {stats['refined_count']}")
+            print(f"   ├ Universal:     {stats['universal_count']}")
+            print(f"   └ Proj-specific: {stats['project_specific_count']}")
+            if stats['project_types']:
+                print(f"\n📦 By Project Type:")
+                for pt, count in stats['project_types'].items():
+                    print(f"   • {pt}: {count}")
+            print(f"{'='*50}\n")
+        except ImportError as e:
+            print(f"❌ Missing dependencies: {e}")
+            print("   Install with: pip install chromadb sentence-transformers")
+            return 1
+        return 0
+    
+    if args.extract:
+        # 从日志提取经验
+        print("📤 Extracting experiences from deployment logs...")
+        extractor = ExperienceExtractor()
+        experiences = extractor.extract_from_all_logs()
+        
+        added = 0
+        skipped = 0
+        for exp in experiences:
+            if store.raw_exists(exp.id):
+                skipped += 1
+            else:
+                store.add_raw_experience(
+                    id=exp.id,
+                    content=exp.content,
+                    metadata={
+                        "project_type": exp.project_type or "unknown",
+                        "framework": exp.framework or "",
+                        "source_log": exp.source_log,
+                        "timestamp": exp.timestamp,
+                        "processed": "False",
+                    }
+                )
+                added += 1
+        
+        store.persist()
+        print(f"✅ Extracted: {added} new, {skipped} already exist")
+        return 0
+    
+    if args.refine:
+        # 使用 LLM 精炼经验
+        unprocessed = store.get_unprocessed_raw_experiences()
+        if not unprocessed:
+            print("ℹ️  No unprocessed experiences to refine")
+            return 0
+        
+        print(f"🔄 Refining {len(unprocessed)} experiences with LLM...")
+        
+        # 需要 LLM 配置
+        from .llm.agent import DeploymentAgent
+        
+        # 创建简单的 LLM 包装器
+        class SimpleLLM:
+            def __init__(self, config):
+                import requests
+                self.config = config
+                self.session = requests.Session()
+                self.endpoint = config.endpoint or (
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{config.model}:generateContent"
+                )
+                proxy = config.proxy
+                if proxy:
+                    self.session.proxies = {"http": proxy, "https": proxy}
+            
+            def generate(self, prompt: str) -> str:
+                url = f"{self.endpoint}?key={self.config.api_key}"
+                body = {
+                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.3},
+                }
+                resp = self.session.post(url, json=body, timeout=60)
+                resp.raise_for_status()
+                data = resp.json()
+                candidates = data.get("candidates") or []
+                for c in candidates:
+                    parts = c.get("content", {}).get("parts", [])
+                    for p in parts:
+                        if p.get("text"):
+                            return p["text"]
+                return ""
+        
+        llm = SimpleLLM(context.config.llm)
+        refiner = ExperienceRefiner(llm)
+        
+        refined_count = 0
+        for exp in unprocessed:
+            print(f"  Processing: {exp['id'][:12]}...", end=" ")
+            refined = refiner.refine(exp)
+            if refined:
+                if not store.refined_exists(refined["id"]):
+                    store.add_refined_experience(
+                        id=refined["id"],
+                        content=refined["content"],
+                        metadata=refined["metadata"]
+                    )
+                store.mark_raw_as_processed(exp["id"])
+                scope = refined["metadata"].get("scope", "unknown")
+                print(f"✓ [{scope}]")
+                refined_count += 1
+            else:
+                print("✗ failed")
+        
+        store.persist()
+        print(f"\n✅ Refined {refined_count}/{len(unprocessed)} experiences")
+        return 0
+    
+    if args.list_experiences:
+        # 列出所有经验
+        refined = store.get_all_refined_experiences()
+        if not refined:
+            print("ℹ️  No refined experiences stored")
+            return 0
+        
+        print(f"\n{'='*70}")
+        print(f"🧠 Stored Experiences ({len(refined)} total)")
+        print(f"{'='*70}\n")
+        
+        for i, exp in enumerate(refined, 1):
+            meta = exp.get("metadata", {})
+            scope = meta.get("scope", "unknown")
+            scope_icon = "🌍" if scope == "universal" else "📦"
+            problem = meta.get("problem_summary", "?")
+            solution = meta.get("solution_summary", "?")
+            project_type = meta.get("project_type", "")
+            framework = meta.get("framework", "")
+            
+            print(f"{i:2}. {scope_icon} [{scope.upper()}] {problem}")
+            print(f"    💡 Solution: {solution}")
+            if project_type or framework:
+                tags = [t for t in [project_type, framework] if t]
+                print(f"    🏷️  Tags: {', '.join(tags)}")
+            print()
+        
+        print(f"{'='*70}")
+        print(f"💡 Use `auto-deployer memory --show N` to view details of experience #N")
+        print(f"💡 Use `auto-deployer memory --export markdown` to export all memories")
+        print(f"{'='*70}\n")
+        
+        return 0
+    
+    if args.show:
+        # 显示单个经验的详细信息
+        refined = store.get_all_refined_experiences()
+        idx = args.show - 1
+        
+        if idx < 0 or idx >= len(refined):
+            print(f"❌ Experience #{args.show} not found. Valid range: 1-{len(refined)}")
+            return 1
+        
+        exp = refined[idx]
+        meta = exp.get("metadata", {})
+        
+        print(f"\n{'='*70}")
+        print(f"🧠 Experience #{args.show} - Detailed View")
+        print(f"{'='*70}\n")
+        
+        print(f"📋 ID:           {exp.get('id', 'N/A')}")
+        print(f"🏷️  Scope:        {meta.get('scope', 'N/A')}")
+        print(f"📦 Project Type: {meta.get('project_type', 'N/A')}")
+        print(f"🔧 Framework:    {meta.get('framework', 'N/A')}")
+        print(f"📅 Source Log:   {meta.get('source_log', 'N/A')}")
+        
+        print(f"\n{'─'*70}")
+        print("❌ PROBLEM:")
+        print(f"{'─'*70}")
+        print(f"   {meta.get('problem_summary', 'N/A')}")
+        
+        print(f"\n{'─'*70}")
+        print("✅ SOLUTION:")
+        print(f"{'─'*70}")
+        print(f"   {meta.get('solution_summary', 'N/A')}")
+        
+        print(f"\n{'─'*70}")
+        print("📝 FULL EXPERIENCE:")
+        print(f"{'─'*70}")
+        content = exp.get('content', '')
+        # 格式化显示
+        for line in content.split('\n'):
+            print(f"   {line}")
+        
+        print(f"\n{'='*70}\n")
+        return 0
+    
+    if args.export:
+        # 导出记忆到可读文件
+        refined = store.get_all_refined_experiences()
+        raw = store.get_all_raw_experiences()
+        
+        if not refined and not raw:
+            print("ℹ️  No experiences to export")
+            return 0
+        
+        memory_dir = get_memory_dir()
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        if args.export == "json":
+            # 导出为 JSON
+            export_file = memory_dir / f"memories_{timestamp}.json"
+            export_data = {
+                "export_time": datetime.now().isoformat(),
+                "statistics": {
+                    "raw_count": len(raw),
+                    "refined_count": len(refined),
+                },
+                "refined_experiences": [
+                    {
+                        "id": exp.get("id"),
+                        "problem": exp.get("metadata", {}).get("problem_summary"),
+                        "solution": exp.get("metadata", {}).get("solution_summary"),
+                        "scope": exp.get("metadata", {}).get("scope"),
+                        "project_type": exp.get("metadata", {}).get("project_type"),
+                        "framework": exp.get("metadata", {}).get("framework"),
+                        "content": exp.get("content"),
+                    }
+                    for exp in refined
+                ],
+                "raw_experiences": [
+                    {
+                        "id": exp.get("id"),
+                        "content": exp.get("content"),
+                        "metadata": exp.get("metadata"),
+                    }
+                    for exp in raw
+                ]
+            }
+            
+            with open(export_file, "w", encoding="utf-8") as f:
+                json.dump(export_data, f, ensure_ascii=False, indent=2)
+            
+            print(f"✅ Exported {len(refined)} refined + {len(raw)} raw experiences to:")
+            print(f"   📄 {export_file}")
+            
+        else:  # markdown or md
+            # 导出为 Markdown
+            export_file = memory_dir / f"memories_{timestamp}.md"
+            
+            lines = [
+                "# 🧠 Auto-Deployer Memory Export",
+                f"",
+                f"**导出时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                f"**精炼经验数**: {len(refined)}",
+                f"**原始经验数**: {len(raw)}",
+                "",
+                "---",
+                "",
+                "## 📚 精炼经验库",
+                "",
+            ]
+            
+            # 按类型分组
+            universal = [e for e in refined if e.get("metadata", {}).get("scope") == "universal"]
+            project_specific = [e for e in refined if e.get("metadata", {}).get("scope") == "project_specific"]
+            
+            if universal:
+                lines.append("### 🌍 通用经验")
+                lines.append("")
+                for i, exp in enumerate(universal, 1):
+                    meta = exp.get("metadata", {})
+                    lines.append(f"#### {i}. {meta.get('problem_summary', 'Unknown Problem')}")
+                    lines.append("")
+                    lines.append(f"- **问题**: {meta.get('problem_summary', 'N/A')}")
+                    lines.append(f"- **解决方案**: {meta.get('solution_summary', 'N/A')}")
+                    lines.append(f"- **项目类型**: {meta.get('project_type', 'N/A')}")
+                    if meta.get('framework'):
+                        lines.append(f"- **框架**: {meta.get('framework')}")
+                    lines.append("")
+                    lines.append("<details>")
+                    lines.append("<summary>📝 详细内容</summary>")
+                    lines.append("")
+                    lines.append("```")
+                    lines.append(exp.get("content", ""))
+                    lines.append("```")
+                    lines.append("</details>")
+                    lines.append("")
+            
+            if project_specific:
+                lines.append("### 📦 项目特定经验")
+                lines.append("")
+                for i, exp in enumerate(project_specific, 1):
+                    meta = exp.get("metadata", {})
+                    lines.append(f"#### {i}. {meta.get('problem_summary', 'Unknown Problem')}")
+                    lines.append("")
+                    lines.append(f"- **问题**: {meta.get('problem_summary', 'N/A')}")
+                    lines.append(f"- **解决方案**: {meta.get('solution_summary', 'N/A')}")
+                    lines.append(f"- **项目类型**: {meta.get('project_type', 'N/A')}")
+                    if meta.get('framework'):
+                        lines.append(f"- **框架**: {meta.get('framework')}")
+                    lines.append("")
+                    lines.append("<details>")
+                    lines.append("<summary>📝 详细内容</summary>")
+                    lines.append("")
+                    lines.append("```")
+                    lines.append(exp.get("content", ""))
+                    lines.append("```")
+                    lines.append("</details>")
+                    lines.append("")
+            
+            lines.append("---")
+            lines.append("")
+            lines.append("*此文件由 Auto-Deployer 自动生成*")
+            
+            with open(export_file, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+            
+            print(f"✅ Exported {len(refined)} experiences to Markdown:")
+            print(f"   📄 {export_file}")
+        
+        return 0
+    
+    if args.clear:
+        # 清除所有经验
+        confirm = input("⚠️  Clear all stored experiences? (type 'yes' to confirm): ")
+        if confirm.lower() == "yes":
+            import shutil
+            shutil.rmtree(store.persist_dir, ignore_errors=True)
+            print("✅ Memory cleared")
+        else:
+            print("❌ Cancelled")
+        return 0
+    
+    # 默认显示状态
+    return handle_memory_command(
+        argparse.Namespace(
+            status=True, extract=False, refine=False,
+            list_experiences=False, show=None, export=None, clear=False
+        ),
+        context
+    )
+
+
 def dispatch_command(args: argparse.Namespace) -> int:
     context = _build_context(args)
     
     # 处理 logs 命令
     if args.command == "logs":
         return handle_logs_command(args)
+    
+    # 处理 memory 命令
+    if args.command == "memory":
+        return handle_memory_command(args, context)
     
     workflow = DeploymentWorkflow(
         config=context.config,

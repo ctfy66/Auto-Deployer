@@ -32,14 +32,15 @@ class LLMConfig:
 class AgentConfig:
     """Configuration for the deployment agent."""
 
-    max_iterations: int = 20
+    max_iterations: int = 40
 
 
 @dataclass
 class DeploymentConfig:
     """Settings related to deployment execution."""
-
-    workspace_root: str = ".auto-deployer/workspace"
+    
+    # 使用统一的 .auto-deployer 目录结构
+    workspace_root: str = ".auto-deployer/workspace"  # 本地仓库分析
     default_host: Optional[str] = None
     default_port: int = 22
     default_username: Optional[str] = None
