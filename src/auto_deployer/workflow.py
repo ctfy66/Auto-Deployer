@@ -30,6 +30,7 @@ class DeploymentRequest:
     auth_method: str
     password: Optional[str]
     key_path: Optional[str]
+    deploy_dir: Optional[str] = None  # 默认为 ~/<repo_name>
 
 
 @dataclass
@@ -37,7 +38,7 @@ class LocalDeploymentRequest:
     """User-provided deployment request for local mode."""
 
     repo_url: str
-    deploy_dir: Optional[str] = None  # 默认为 ~/app
+    deploy_dir: Optional[str] = None  # 默认为 ~/<repo_name>
 
 
 class DeploymentWorkflow:
@@ -154,7 +155,9 @@ class DeploymentWorkflow:
             logger.warning("   Failed to gather local facts: %s", exc)
         
         # Step 3: 创建本地会话
-        deploy_dir = request.deploy_dir or os.path.join(os.path.expanduser("~"), "app")
+        # 获取默认部署目录（仓库名）
+        repo_name = request.repo_url.rstrip("/").split("/")[-1].replace(".git", "")
+        deploy_dir = request.deploy_dir or os.path.join(os.path.expanduser("~"), repo_name)
         logger.info("📁 Deploy directory: %s", deploy_dir)
         
         local_session = LocalSession(working_dir=os.path.expanduser("~"))
@@ -236,8 +239,10 @@ class DeploymentWorkflow:
         try:
             from .knowledge import ExperienceStore, ExperienceRetriever
             store = ExperienceStore()
-            # 检查是否有已精炼的经验
-            if store.refined_count() > 0:
+            # 检查是否有任何经验（精炼的或原始的）
+            total_experiences = store.refined_count() + store.raw_count()
+            if total_experiences > 0:
+                logger.info(f"📚 Loaded experience store: {store.refined_count()} refined, {store.raw_count()} raw")
                 return ExperienceRetriever(store)
         except ImportError:
             # chromadb 或 sentence-transformers 未安装

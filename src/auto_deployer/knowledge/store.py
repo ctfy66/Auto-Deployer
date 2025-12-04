@@ -207,6 +207,33 @@ class ExperienceStore:
         self._ensure_initialized()
         return self._raw_collection.count()
     
+    def search_raw(
+        self,
+        query: str,
+        n_results: int = 5,
+        where: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """搜索原始经验（语义搜索）"""
+        self._ensure_initialized()
+        
+        results = self._raw_collection.query(
+            query_texts=[query],
+            n_results=n_results,
+            where=where
+        )
+        
+        experiences = []
+        if results["ids"] and results["ids"][0]:
+            for i, id in enumerate(results["ids"][0]):
+                experiences.append({
+                    "id": id,
+                    "content": results["documents"][0][i],
+                    "metadata": results["metadatas"][0][i],
+                    "distance": results["distances"][0][i] if results.get("distances") else None
+                })
+        
+        return experiences
+    
     # ========== Refined Experiences ==========
     
     def add_refined_experience(

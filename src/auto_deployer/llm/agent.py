@@ -33,6 +33,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _get_repo_name(repo_url: str) -> str:
+    """从仓库 URL 提取仓库名."""
+    return repo_url.rstrip("/").split("/")[-1].replace(".git", "")
+
+
+def _get_default_deploy_dir(repo_url: str, deploy_dir: Optional[str] = None) -> str:
+    """获取默认部署目录（优先使用指定目录，否则用 ~/<repo_name>）."""
+    if deploy_dir:
+        return deploy_dir
+    repo_name = _get_repo_name(repo_url)
+    return f"~/{repo_name}"
+
+
 @dataclass
 class AgentAction:
     """An action decided by the LLM agent."""
@@ -134,6 +147,7 @@ class DeploymentAgent:
         Returns True if deployment succeeded, False otherwise.
         """
         # 打印详细的配置信息
+        deploy_dir = _get_default_deploy_dir(request.repo_url, request.deploy_dir)
         logger.info("=" * 60)
         logger.info("🚀 Auto-Deployer Agent Starting")
         logger.info("=" * 60)
@@ -146,6 +160,7 @@ class DeploymentAgent:
         logger.info("🎯 Deployment Target:")
         logger.info("   Repository:     %s", request.repo_url)
         logger.info("   Server:         %s@%s:%d", request.username, request.host, request.port)
+        logger.info("   Deploy Dir:     %s", deploy_dir)
         logger.info("   Auth Method:    %s", request.auth_method)
         if host_facts:
             logger.info("")
@@ -172,6 +187,7 @@ class DeploymentAgent:
         # 记录初始上下文
         self.deployment_log["context"] = {
             "repo_url": context.get("repo_url"),
+            "deploy_dir": context.get("deploy_dir"),
             "ssh_target": context.get("ssh_target"),
             "has_repo_analysis": repo_context is not None,
             "project_type": repo_context.project_type if repo_context else None,
@@ -334,7 +350,8 @@ class DeploymentAgent:
         logger.info("🎯 Deployment Target:")
         logger.info("   Repository:     %s", request.repo_url)
         logger.info("   Mode:           LOCAL (this machine)")
-        logger.info("   Deploy Dir:     %s", request.deploy_dir or "~/app")
+        deploy_dir = _get_default_deploy_dir(request.repo_url, request.deploy_dir)
+        logger.info("   Deploy Dir:     %s", deploy_dir)
         if host_facts:
             logger.info("")
             logger.info("🖥️  Local Host Info:")
@@ -361,7 +378,7 @@ class DeploymentAgent:
         # 记录初始上下文
         self.deployment_log["context"] = {
             "repo_url": context.get("repo_url"),
-            "deploy_dir": request.deploy_dir or "~/app",
+            "deploy_dir": deploy_dir,
             "os": host_facts.os_name if host_facts else platform.system(),
             "has_repo_analysis": repo_context is not None,
             "project_type": repo_context.project_type if repo_context else None,
@@ -490,15 +507,16 @@ class DeploymentAgent:
     def _init_local_deployment_log(self, request: "LocalDeploymentRequest", host_facts: Optional["LocalHostFacts"] = None) -> None:
         """Initialize a new deployment log file for local deployment."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        repo_name = request.repo_url.split("/")[-1].replace(".git", "")
+        repo_name = _get_repo_name(request.repo_url)
         filename = f"deploy_local_{repo_name}_{timestamp}.json"
         self.current_log_file = self.log_dir / filename
         
+        deploy_dir = _get_default_deploy_dir(request.repo_url, request.deploy_dir)
         self.deployment_log = {
             "mode": "local",
             "repo_url": request.repo_url,
             "target": f"local:{platform.node()}",
-            "deploy_dir": request.deploy_dir or "~/app",
+            "deploy_dir": deploy_dir,
             "os": host_facts.os_name if host_facts else platform.system(),
             "start_time": datetime.now().isoformat(),
             "end_time": None,
@@ -518,13 +536,15 @@ class DeploymentAgent:
         """Initialize a new deployment log file."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         # 从 repo_url 提取项目名
-        repo_name = request.repo_url.split("/")[-1].replace(".git", "")
+        repo_name = _get_repo_name(request.repo_url)
         filename = f"deploy_{repo_name}_{timestamp}.json"
         self.current_log_file = self.log_dir / filename
         
+        deploy_dir = _get_default_deploy_dir(request.repo_url, request.deploy_dir)
         self.deployment_log = {
             "repo_url": request.repo_url,
             "target": f"{request.username}@{request.host}:{request.port}",
+            "deploy_dir": deploy_dir,
             "start_time": datetime.now().isoformat(),
             "end_time": None,
             "status": "running",
@@ -552,9 +572,10 @@ class DeploymentAgent:
         repo_context: Optional["RepoContext"] = None,
     ) -> dict:
         """Build the initial context for local deployment."""
+        deploy_dir = _get_default_deploy_dir(request.repo_url, request.deploy_dir)
         ctx = {
             "repo_url": request.repo_url,
-            "deploy_dir": request.deploy_dir or "~/app",
+            "deploy_dir": deploy_dir,
             "mode": "local",
             "local_host": host_facts.to_payload() if host_facts else {
                 "os_name": platform.system(),
@@ -681,7 +702,7 @@ Deploy the given repository locally and ensure the application is running.
 - Shell: PowerShell
 - Commands you output will be executed via PowerShell
 - Working directory is user's home folder
-- Deploy to: {context.get('deploy_dir', '~/app')}
+- Deploy to: {context.get('deploy_dir')}
 
 # Available Actions
 Respond with JSON:
@@ -722,7 +743,7 @@ Deploy the given repository locally and ensure the application is running.
 - Shell: bash
 - Commands you output will be executed directly
 - Working directory is user's home folder
-- Deploy to: {context.get('deploy_dir', '~/app')}
+- Deploy to: {context.get('deploy_dir')}
 
 # Available Actions
 Respond with JSON:
@@ -736,7 +757,9 @@ Respond with JSON:
 # CRITICAL RULES
 1. For servers, use nohup: `nohup npm start > app.log 2>&1 &`
 2. Wait after starting: `sleep 3`
-3. Verify with curl: `curl -s http://localhost:<port>`
+3. Verify with curl and check HTTP status code:
+   - `curl -s -o /dev/null -w "%{http_code}" http://localhost:<port>`
+   - Only HTTP 200 = success! 301/302/404/5xx = FAILED, need to fix!
 """ + user_interaction_guide
 
         # 构建当前状态
@@ -908,8 +931,10 @@ Respond with JSON:
         repo_context: Optional["RepoContext"] = None,
     ) -> dict:
         """Build the initial context for the agent."""
+        deploy_dir = _get_default_deploy_dir(request.repo_url, request.deploy_dir)
         ctx = {
             "repo_url": request.repo_url,
+            "deploy_dir": deploy_dir,
             "ssh_target": f"{request.username}@{request.host}:{request.port}",
             "remote_host": host_facts.to_payload() if host_facts else None,
         }
@@ -1042,8 +1067,27 @@ You have been given analyzed repository context below. Key things to look for:
 
 # ⚠️ Critical Constraints
 1. **Long-running commands BLOCK FOREVER** - Use `nohup ... &` or Docker `-d`
-2. **Verification needs actual content** - Empty curl = failure
+2. **Verification needs HTTP 200** - Only 200 means success! 301/302/404/5xx = FAILED
 3. **Ask user when stuck** - Don't waste iterations on trial-and-error
+
+# ✅ Deployment Verification (MUST DO!)
+Before declaring "done", ALWAYS verify the deployment works:
+
+```bash
+# Check HTTP status - MUST be 200!
+curl -s -o /dev/null -w "%{http_code}" http://localhost:PORT
+# or for remote:
+curl -s -o /dev/null -w "%{http_code}" http://SERVER_IP:PORT
+```
+
+**Interpret the status code:**
+- `200` = SUCCESS ✅ - Application is working
+- `301/302` = REDIRECT ⚠️ - Check Nginx config, likely `try_files` issue
+- `404` = NOT FOUND ❌ - Wrong root path or missing index.html
+- `5xx` = SERVER ERROR ❌ - Check application logs
+- `000` or timeout = NOT RUNNING ❌ - Service not started
+
+**Only declare `action: "done"` when you get HTTP 200!**
 
 # 🔧 Error Diagnosis & Self-Correction
 
@@ -1083,8 +1127,23 @@ This keeps the heredoc inside bash's stdin, separate from sudo's password input.
 - Use `git clone` with check: `test -d /path || git clone ...`
 
 ## Nginx try_files for static sites
-✅ CORRECT: `try_files $uri $uri/index.html /index.html;`
-❌ WRONG: `try_files $uri /index.html;` (needs at least 2 args + fallback)
+**For SSG (VitePress, Hugo, Jekyll, Gatsby built sites):**
+```nginx
+# SSG sites have pre-generated HTML files
+location / {
+    try_files $uri $uri/ $uri.html =404;
+}
+```
+
+**For SPA (React, Vue, Angular with client-side routing):**
+```nginx
+# SPA needs fallback to index.html for client-side routing
+location / {
+    try_files $uri $uri/ /index.html;
+}
+```
+
+❌ WRONG: Using SPA config for SSG sites causes redirect loops!
 
 # �💡 Decision Making Guide
 - See `docker-compose.yml`? → `docker-compose up -d` (DON'T pip install!)
@@ -1116,9 +1175,20 @@ This keeps the heredoc inside bash's stdin, separate from sudo's password input.
             try:
                 project_type = context.get("project_type")
                 framework = context.get("framework")
+                
+                # 构建查询：使用最近的命令输出或错误信息作为语义搜索条件
+                query = None
+                if self.history:
+                    last_action = self.history[-1]
+                    # 使用最近命令的输出作为查询（可能包含错误信息）
+                    output = last_action.get("output") or last_action.get("result", "")
+                    if isinstance(output, str) and len(output) > 20:
+                        query = output[:500]  # 限制长度
+                
                 experiences_text = self.experience_retriever.get_formatted_experiences(
                     project_type=project_type,
                     framework=framework,
+                    query=query,
                     max_results=10,
                     max_length=2000
                 )

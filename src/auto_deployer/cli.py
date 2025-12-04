@@ -44,14 +44,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     deploy_parser.add_argument("--repo", required=True, help="Git repository URL")
     
+    # 部署目录（适用于本地和远程模式）
+    deploy_parser.add_argument(
+        "--deploy-dir", type=str, default=None,
+        help="Target directory for deployment (default: ~/<repo_name>)"
+    )
+    
     # 本地部署模式
     deploy_parser.add_argument(
         "--local", "-L", action="store_true",
         help="Deploy locally on this machine (no SSH needed)"
-    )
-    deploy_parser.add_argument(
-        "--deploy-dir", type=str, default=None,
-        help="Local directory for deployment (default: ~/app)"
     )
     
     # SSH 远程部署选项
@@ -683,6 +685,7 @@ def dispatch_command(args: argparse.Namespace) -> int:
             auth_method=auth_method,
             password=password,
             key_path=key_path,
+            deploy_dir=args.deploy_dir,  # 可以为 None，会使用仓库名
         )
         workflow.run_deploy(request)
         return 0

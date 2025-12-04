@@ -24,17 +24,18 @@ class ExperienceRetriever:
         max_results: int = 10
     ) -> List[Dict[str, Any]]:
         """
-        获取相关经验
+        获取相关经验（同时使用精炼经验和原始经验）
         
         策略:
-        1. 所有 universal 经验
-        2. 匹配 project_type 或 framework 的 project_specific 经验
-        3. 如果提供了 query，用语义搜索补充
+        1. 所有 universal 精炼经验
+        2. 匹配 project_type 或 framework 的 project_specific 精炼经验
+        3. 如果提供了 query，用语义搜索补充（同时搜索精炼和原始）
+        4. 如果精炼经验不足，用原始经验补充
         
         Args:
             project_type: 项目类型 (如 "nodejs", "python")
             framework: 框架 (如 "vitepress", "flask")
-            query: 可选的搜索查询
+            query: 可选的搜索查询（当前状态/错误信息）
             max_results: 最大返回数量
         
         Returns:
@@ -43,40 +44,67 @@ class ExperienceRetriever:
         experiences = []
         seen_ids = set()
         
-        # 1. 获取所有 universal 经验
+        # 1. 获取所有 universal 精炼经验
         universal = self._get_universal_experiences()
         for exp in universal:
             if exp["id"] not in seen_ids:
+                exp["source"] = "refined"
                 experiences.append(exp)
                 seen_ids.add(exp["id"])
         
-        # 2. 获取匹配的 project_specific 经验
+        # 2. 获取匹配的 project_specific 精炼经验
         if project_type or framework:
             specific = self._get_project_specific_experiences(project_type, framework)
             for exp in specific:
                 if exp["id"] not in seen_ids:
+                    exp["source"] = "refined"
                     experiences.append(exp)
                     seen_ids.add(exp["id"])
         
         # 3. 如果提供了 query，用语义搜索补充
-        if query and len(experiences) < max_results:
-            remaining = max_results - len(experiences)
-            search_results = self.store.search_refined(query, n_results=remaining)
-            for exp in search_results:
+        if query:
+            remaining = max(5, max_results - len(experiences))
+            
+            # 3.1 搜索精炼经验
+            refined_results = self.store.search_refined(query, n_results=remaining)
+            for exp in refined_results:
                 if exp["id"] not in seen_ids:
+                    exp["source"] = "refined"
+                    experiences.append(exp)
+                    seen_ids.add(exp["id"])
+            
+            # 3.2 搜索原始经验
+            raw_results = self.store.search_raw(query, n_results=remaining)
+            for exp in raw_results:
+                if exp["id"] not in seen_ids:
+                    exp["source"] = "raw"
                     experiences.append(exp)
                     seen_ids.add(exp["id"])
         
-        # 按 confidence 排序
-        experiences.sort(
-            key=lambda x: float(x.get("metadata", {}).get("confidence", 0)),
-            reverse=True
-        )
+        # 4. 如果精炼经验不足，用原始经验按项目类型匹配补充
+        if len(experiences) < max_results and (project_type or framework):
+            raw_experiences = self._get_matching_raw_experiences(project_type, framework)
+            for exp in raw_experiences:
+                if exp["id"] not in seen_ids:
+                    exp["source"] = "raw"
+                    experiences.append(exp)
+                    seen_ids.add(exp["id"])
+                if len(experiences) >= max_results:
+                    break
+        
+        # 按来源和 confidence 排序（精炼优先）
+        def sort_key(x):
+            source_priority = 0 if x.get("source") == "refined" else 1
+            confidence = float(x.get("metadata", {}).get("confidence", 0.5))
+            distance = float(x.get("distance", 1.0)) if x.get("distance") else 1.0
+            return (source_priority, -confidence, distance)
+        
+        experiences.sort(key=sort_key)
         
         return experiences[:max_results]
     
     def _get_universal_experiences(self) -> List[Dict[str, Any]]:
-        """获取所有 universal 经验"""
+        """获取所有 universal 精炼经验"""
         all_refined = self.store.get_all_refined_experiences()
         return [
             exp for exp in all_refined
@@ -88,7 +116,7 @@ class ExperienceRetriever:
         project_type: Optional[str],
         framework: Optional[str]
     ) -> List[Dict[str, Any]]:
-        """获取匹配的 project_specific 经验"""
+        """获取匹配的 project_specific 精炼经验"""
         all_refined = self.store.get_all_refined_experiences()
         
         matching = []
@@ -107,6 +135,29 @@ class ExperienceRetriever:
             elif framework and framework.lower() in exp_framework:
                 matching.append(exp)
             elif framework and framework.lower() in meta.get("keywords", "").lower():
+                matching.append(exp)
+        
+        return matching
+    
+    def _get_matching_raw_experiences(
+        self,
+        project_type: Optional[str],
+        framework: Optional[str]
+    ) -> List[Dict[str, Any]]:
+        """获取匹配的原始经验"""
+        all_raw = self.store.get_all_raw_experiences()
+        
+        matching = []
+        for exp in all_raw:
+            meta = exp.get("metadata", {})
+            
+            # 检查项目类型匹配
+            exp_project_type = meta.get("project_type", "").lower()
+            exp_framework = meta.get("framework", "").lower()
+            
+            if project_type and project_type.lower() in exp_project_type:
+                matching.append(exp)
+            elif framework and framework.lower() in exp_framework:
                 matching.append(exp)
         
         return matching
@@ -137,24 +188,43 @@ class ExperienceRetriever:
         
         for i, exp in enumerate(experiences, 1):
             meta = exp.get("metadata", {})
+            source = exp.get("source", "unknown").upper()
             
-            scope = meta.get("scope", "unknown").upper()
-            problem = meta.get("problem_summary", "Unknown problem")
-            solution = meta.get("solution_summary", "Unknown solution")
-            lesson = meta.get("lesson", "")
-            framework = meta.get("framework", "")
-            
-            entry_lines = [
-                f"### Experience {i} [{scope}]",
-                f"**Problem**: {problem}",
-                f"**Solution**: {solution}",
-            ]
-            
-            if lesson:
-                entry_lines.append(f"**Lesson**: {lesson}")
-            
-            if framework:
-                entry_lines.append(f"**Framework**: {framework}")
+            if source == "REFINED":
+                # 精炼经验：结构化格式
+                scope = meta.get("scope", "unknown").upper()
+                problem = meta.get("problem_summary", "Unknown problem")
+                solution = meta.get("solution_summary", "Unknown solution")
+                lesson = meta.get("lesson", "")
+                framework = meta.get("framework", "")
+                
+                entry_lines = [
+                    f"### Experience {i} [REFINED/{scope}]",
+                    f"**Problem**: {problem}",
+                    f"**Solution**: {solution}",
+                ]
+                
+                if lesson:
+                    entry_lines.append(f"**Lesson**: {lesson}")
+                
+                if framework:
+                    entry_lines.append(f"**Framework**: {framework}")
+            else:
+                # 原始经验：简化格式，截取关键部分
+                project_type = meta.get("project_type", "unknown")
+                framework = meta.get("framework", "")
+                content = exp.get("content", "")
+                
+                # 截取内容摘要（最多 500 字符）
+                content_preview = content[:500] + "..." if len(content) > 500 else content
+                
+                entry_lines = [
+                    f"### Experience {i} [RAW/{project_type}]",
+                ]
+                if framework:
+                    entry_lines.append(f"**Framework**: {framework}")
+                entry_lines.append(f"**Deployment Log Preview**:")
+                entry_lines.append(f"```\n{content_preview}\n```")
             
             entry_lines.append("")
             
