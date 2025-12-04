@@ -5,6 +5,7 @@ from .store import ExperienceStore
 from .extractor import ExperienceExtractor
 from .refiner import ExperienceRefiner
 from .retriever import ExperienceRetriever
+from .presets import init_preset_experiences, get_preset_count, PRESET_EXPERIENCES
 
 __all__ = [
     "ResolutionStep",
@@ -15,4 +16,7 @@ __all__ = [
     "ExperienceExtractor", 
     "ExperienceRefiner",
     "ExperienceRetriever",
+    "init_preset_experiences",
+    "get_preset_count",
+    "PRESET_EXPERIENCES",
 ]

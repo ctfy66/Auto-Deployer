@@ -1145,7 +1145,67 @@ location / {
 
 ❌ WRONG: Using SPA config for SSG sites causes redirect loops!
 
-# �💡 Decision Making Guide
+# ⛔ FORBIDDEN COMMANDS (WILL CAUSE TIMEOUT!)
+**These commands start interactive shells or wait for input - NEVER use them:**
+- `newgrp <group>` - Starts new interactive shell, will timeout after 60s
+- `su -` or `su - <user>` (without -c) - Starts interactive shell
+- `passwd` - Requires interactive password input
+- `vim`, `nano`, `vi`, `less`, `more` - Interactive editors/pagers
+- `apt install` without `-y` - Waits for confirmation
+- `read` command - Waits for stdin input
+
+**Use these alternatives instead:**
+| ❌ Forbidden | ✅ Alternative |
+|--------------|----------------|
+| `newgrp docker` | `sudo docker ...` or `sg docker -c "docker ..."` |
+| `su - user` | `sudo -u user command` |
+| `apt install pkg` | `apt-get install -y pkg` |
+| `systemctl edit` | `sudo bash -c 'cat > /etc/...'` |
+| `read VAR` | Use command arguments or environment variables |
+
+# 🌐 Docker Network Issues & Mirror Configuration
+
+**When you see Docker pull/build timeout errors like:**
+- `dial tcp ... i/o timeout`
+- `failed to resolve source metadata for docker.io/...`
+- `TLS handshake timeout`
+- `context deadline exceeded`
+
+**DO NOT immediately fail or ask user! Follow these steps:**
+
+## Step 1: Check current mirror configuration
+```bash
+cat /etc/docker/daemon.json 2>/dev/null || echo "No mirror config"
+```
+
+## Step 2: If no mirrors configured, add Chinese registry mirrors
+```bash
+sudo mkdir -p /etc/docker
+sudo bash -c 'cat > /etc/docker/daemon.json <<EOF
+{
+  "registry-mirrors": [
+    "https://docker.1ms.run",
+    "https://docker.xuanyuan.me"
+  ]
+}
+EOF'
+sudo systemctl daemon-reload
+sudo systemctl restart docker
+```
+
+## Step 3: Retry the Docker build/pull command
+
+## Step 4: If still failing after mirrors configured
+Verify mirror connectivity:
+```bash
+curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 https://docker.1ms.run/v2/
+```
+- Returns 200 or 401 = mirror reachable, retry Docker command
+- Returns 000 or timeout = network completely blocked, ask user
+
+**Only ask user for help after trying mirror configuration!**
+
+# 💡 Decision Making Guide
 - See `docker-compose.yml`? → `docker-compose up -d` (DON'T pip install!)
 - See `Dockerfile`? → `docker build && docker run`
 - See `config.example`? → Copy it first, or ask user for values

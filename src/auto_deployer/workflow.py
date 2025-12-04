@@ -237,8 +237,14 @@ class DeploymentWorkflow:
     def _get_experience_retriever(self):
         """尝试获取经验检索器，如果依赖未安装则返回 None"""
         try:
-            from .knowledge import ExperienceStore, ExperienceRetriever
+            from .knowledge import ExperienceStore, ExperienceRetriever, init_preset_experiences
             store = ExperienceStore()
+            
+            # 初始化预置经验（只会添加不存在的）
+            added = init_preset_experiences(store)
+            if added > 0:
+                logger.info(f"📦 Initialized {added} preset experiences")
+            
             # 检查是否有任何经验（精炼的或原始的）
             total_experiences = store.refined_count() + store.raw_count()
             if total_experiences > 0:
