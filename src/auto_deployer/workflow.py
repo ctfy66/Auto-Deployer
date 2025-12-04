@@ -194,6 +194,9 @@ class DeploymentWorkflow:
             max_iterations=self.config.agent.max_iterations,
             interaction_handler=self.interaction_handler,
             experience_retriever=experience_retriever,
+            enable_planning=self.config.agent.enable_planning,
+            require_plan_approval=self.config.agent.require_plan_approval,
+            planning_timeout=self.config.agent.planning_timeout,
         )
         success = agent.deploy_local(request, host_facts, session, repo_context)
         
@@ -226,6 +229,9 @@ class DeploymentWorkflow:
             max_iterations=self.config.agent.max_iterations,
             interaction_handler=self.interaction_handler,
             experience_retriever=experience_retriever,
+            enable_planning=self.config.agent.enable_planning,
+            require_plan_approval=self.config.agent.require_plan_approval,
+            planning_timeout=self.config.agent.planning_timeout,
         )
         success = agent.deploy(request, host_facts, session, repo_context)
         

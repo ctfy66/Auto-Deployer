@@ -33,6 +33,10 @@ class AgentConfig:
     """Configuration for the deployment agent."""
 
     max_iterations: int = 40
+    # 规划阶段配置
+    enable_planning: bool = True           # 是否启用规划阶段
+    require_plan_approval: bool = False    # 是否需要用户确认计划
+    planning_timeout: int = 60             # 规划超时（秒）
 
 
 @dataclass

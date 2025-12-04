@@ -72,6 +72,53 @@ class CommandResult:
     exit_code: int
 
 
+@dataclass
+class DeploymentStep:
+    """部署计划中的单个步骤"""
+    id: int
+    name: str                                    # 如 "Install Node.js"
+    description: str                             # 详细描述
+    category: str                                # "prerequisite" | "setup" | "build" | "deploy" | "verify"
+    estimated_commands: List[str] = field(default_factory=list)  # 预计执行的命令（参考用）
+    success_criteria: str = ""                   # 成功标准
+    depends_on: List[int] = field(default_factory=list)  # 依赖的步骤ID
+
+
+@dataclass
+class DeploymentPlan:
+    """完整的部署方案"""
+    strategy: str                                # "docker-compose" | "docker" | "traditional" | "static"
+    components: List[str] = field(default_factory=list)  # ["nodejs", "nginx", "pm2"]
+    steps: List[DeploymentStep] = field(default_factory=list)
+    risks: List[str] = field(default_factory=list)       # 已识别的风险
+    notes: List[str] = field(default_factory=list)       # 注意事项
+    estimated_time: str = ""                     # 预计时间
+    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    
+    def to_dict(self) -> dict:
+        """转换为字典用于日志记录"""
+        return {
+            "strategy": self.strategy,
+            "components": self.components,
+            "steps": [
+                {
+                    "id": s.id,
+                    "name": s.name,
+                    "description": s.description,
+                    "category": s.category,
+                    "estimated_commands": s.estimated_commands,
+                    "success_criteria": s.success_criteria,
+                    "depends_on": s.depends_on,
+                }
+                for s in self.steps
+            ],
+            "risks": self.risks,
+            "notes": self.notes,
+            "estimated_time": self.estimated_time,
+            "created_at": self.created_at,
+        }
+
+
 class DeploymentAgent:
     """
     LLM-powered agent that autonomously deploys applications.
@@ -90,6 +137,9 @@ class DeploymentAgent:
         log_dir: Optional[str] = None,
         interaction_handler: Optional[UserInteractionHandler] = None,
         experience_retriever: Optional["ExperienceRetriever"] = None,
+        enable_planning: bool = True,
+        require_plan_approval: bool = False,
+        planning_timeout: int = 60,
     ) -> None:
         if not config.api_key:
             raise ValueError("Agent requires an API key")
@@ -102,6 +152,15 @@ class DeploymentAgent:
         
         # 经验检索器（可选）
         self.experience_retriever = experience_retriever
+        
+        # 规划阶段配置
+        self.enable_planning = enable_planning
+        self.require_plan_approval = require_plan_approval
+        self.planning_timeout = planning_timeout
+        
+        # 当前部署计划
+        self.current_plan: Optional[DeploymentPlan] = None
+        self.current_plan_step: int = 0
         
         # 日志目录
         self.log_dir = Path(log_dir) if log_dir else Path.cwd() / "agent_logs"
@@ -182,6 +241,9 @@ class DeploymentAgent:
         
         # 初始化上下文 - 包含预分析的仓库信息
         self.history = []
+        self.user_interactions = []
+        self.current_plan = None
+        self.current_plan_step = 0
         context = self._build_initial_context(request, host_facts, repo_context)
         
         # 记录初始上下文
@@ -194,8 +256,49 @@ class DeploymentAgent:
             "framework": repo_context.detected_framework if repo_context else None,
         }
         
+        # 🆕 Phase 1: 创建部署计划
+        if self.enable_planning:
+            logger.info("📋 Phase 1: Creating deployment plan...")
+            self.current_plan = self._create_deployment_plan(context, repo_context)
+            
+            if self.current_plan:
+                # 显示计划
+                self._display_plan(self.current_plan)
+                
+                # 记录计划到日志
+                self.deployment_log["plan"] = self.current_plan.to_dict()
+                self.deployment_log["plan_execution"] = {
+                    "current_step": 0,
+                    "completed_steps": [],
+                    "skipped_steps": [],
+                    "adjusted_steps": [],
+                }
+                self._save_deployment_log()
+                
+                # 用户确认（如果需要）
+                if self.require_plan_approval:
+                    response = self._ask_plan_approval(self.current_plan)
+                    if response.cancelled:
+                        logger.info("❌ User cancelled deployment")
+                        self.deployment_log["status"] = "cancelled"
+                        self.deployment_log["end_time"] = datetime.now().isoformat()
+                        self._save_deployment_log()
+                        return False
+                
+                logger.info("")
+                logger.info("🚀 Phase 2: Executing deployment plan...")
+                logger.info("")
+            else:
+                logger.warning("⚠️  Failed to create deployment plan, falling back to reactive mode")
+        
         for iteration in range(1, self.max_iterations + 1):
-            logger.info(f"📍 Iteration {iteration}/{self.max_iterations}")
+            # 显示进度（如果有计划）
+            if self.current_plan and self.current_plan_step < len(self.current_plan.steps):
+                step = self.current_plan.steps[self.current_plan_step]
+                total = len(self.current_plan.steps)
+                logger.info(f"📍 Step {self.current_plan_step + 1}/{total}: {step.name} (Iteration {iteration})")
+            else:
+                logger.info(f"📍 Iteration {iteration}/{self.max_iterations}")
             
             # 让 LLM 决定下一步
             action = self._think(context)
@@ -373,6 +476,8 @@ class DeploymentAgent:
         # 初始化上下文
         self.history = []
         self.user_interactions = []
+        self.current_plan = None
+        self.current_plan_step = 0
         context = self._build_local_initial_context(request, host_facts, repo_context)
         
         # 记录初始上下文
@@ -385,8 +490,49 @@ class DeploymentAgent:
             "framework": repo_context.detected_framework if repo_context else None,
         }
         
+        # 🆕 Phase 1: 创建部署计划
+        if self.enable_planning:
+            logger.info("📋 Phase 1: Creating deployment plan...")
+            self.current_plan = self._create_deployment_plan(context, repo_context)
+            
+            if self.current_plan:
+                # 显示计划
+                self._display_plan(self.current_plan)
+                
+                # 记录计划到日志
+                self.deployment_log["plan"] = self.current_plan.to_dict()
+                self.deployment_log["plan_execution"] = {
+                    "current_step": 0,
+                    "completed_steps": [],
+                    "skipped_steps": [],
+                    "adjusted_steps": [],
+                }
+                self._save_deployment_log()
+                
+                # 用户确认（如果需要）
+                if self.require_plan_approval:
+                    response = self._ask_plan_approval(self.current_plan)
+                    if response.cancelled:
+                        logger.info("❌ User cancelled deployment")
+                        self.deployment_log["status"] = "cancelled"
+                        self.deployment_log["end_time"] = datetime.now().isoformat()
+                        self._save_deployment_log()
+                        return False
+                
+                logger.info("")
+                logger.info("🚀 Phase 2: Executing deployment plan...")
+                logger.info("")
+            else:
+                logger.warning("⚠️  Failed to create deployment plan, falling back to reactive mode")
+        
         for iteration in range(1, self.max_iterations + 1):
-            logger.info(f"📍 Iteration {iteration}/{self.max_iterations}")
+            # 显示进度（如果有计划）
+            if self.current_plan and self.current_plan_step < len(self.current_plan.steps):
+                step = self.current_plan.steps[self.current_plan_step]
+                total = len(self.current_plan.steps)
+                logger.info(f"📍 Step {self.current_plan_step + 1}/{total}: {step.name} (Iteration {iteration})")
+            else:
+                logger.info(f"📍 Iteration {iteration}/{self.max_iterations}")
             
             # 让 LLM 决定下一步
             action = self._think_local(context)
@@ -774,6 +920,12 @@ Respond with JSON:
             state["user_interactions"] = self.user_interactions[-5:]
         
         parts = [system_prompt, "\n---\n"]
+        
+        # 添加部署计划上下文（如果有）
+        plan_context = self._get_plan_context_for_prompt()
+        if plan_context:
+            parts.append(plan_context)
+            parts.append("\n---\n")
         
         if has_repo_analysis:
             parts.append("# Pre-Analyzed Repository Context")
@@ -1258,6 +1410,12 @@ curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 https://docker.1ms.r
             except Exception as e:
                 logger.warning(f"Failed to retrieve experiences: {e}")
         
+        # 添加部署计划上下文（如果有）
+        plan_context = self._get_plan_context_for_prompt()
+        if plan_context:
+            parts.append(plan_context)
+            parts.append("\n---\n")
+        
         # 添加预分析的仓库上下文
         if "repo_analysis" in context:
             parts.append("# Pre-Analyzed Repository Context")
@@ -1276,3 +1434,328 @@ curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 https://docker.1ms.r
         parts.append("\nBased on the above information, decide your next action. Respond with JSON only.")
         
         return "\n".join(parts)
+
+    # ========== 规划阶段方法 ==========
+    
+    def _build_planning_prompt(self, context: dict) -> str:
+        """构建规划阶段的 prompt"""
+        repo_analysis = context.get("repo_analysis", "No repository analysis available.")
+        project_type = context.get("project_type", "unknown")
+        framework = context.get("framework", "unknown")
+        deploy_dir = context.get("deploy_dir", "~/app")
+        
+        # 判断是本地还是远程部署
+        is_local = context.get("mode") == "local"
+        if is_local:
+            target_info = f"Local machine ({context.get('local_host', {}).get('os_name', 'Unknown OS')})"
+        else:
+            target_info = context.get("ssh_target", "Remote server")
+        
+        prompt = f"""# Role
+You are a DevOps deployment planner. Analyze the repository and create a structured deployment plan.
+
+# Input
+- Repository: {context.get("repo_url")}
+- Deploy Directory: {deploy_dir}
+- Target: {target_info}
+- Project Type: {project_type}
+- Framework: {framework}
+
+# Repository Analysis
+{repo_analysis}
+
+# Task
+Create a deployment plan. Think carefully about:
+1. What deployment strategy is best? (Docker if Dockerfile exists, traditional otherwise)
+2. What components need to be installed? (Node.js, Python, Nginx, etc.)
+3. What are the exact steps to deploy this project?
+4. What could go wrong? (missing env files, build errors, etc.)
+
+Output a JSON object with this exact structure:
+```json
+{{
+  "strategy": "docker-compose|docker|traditional|static",
+  "components": ["list", "of", "required", "components"],
+  "steps": [
+    {{
+      "id": 1,
+      "name": "Short step name",
+      "description": "What this step does and why",
+      "category": "prerequisite|setup|build|deploy|verify",
+      "estimated_commands": ["command1", "command2"],
+      "success_criteria": "How to verify this step succeeded",
+      "depends_on": []
+    }}
+  ],
+  "risks": ["Potential risk 1", "Potential risk 2"],
+  "notes": ["Important note 1"],
+  "estimated_time": "5-10 minutes"
+}}
+```
+
+# Rules
+1. Choose the SIMPLEST strategy that works:
+   - If docker-compose.yml exists → use "docker-compose"
+   - If only Dockerfile exists → use "docker"
+   - If neither exists → use "traditional" or "static"
+2. Include ALL necessary steps (install dependencies, configure, build, deploy, verify)
+3. Each step should be atomic and independently verifiable
+4. Always include a final "verify" step to confirm deployment works
+5. Identify risks from repository analysis (e.g., missing .env, syntax errors in configs)
+6. Order steps by dependencies
+
+# Category Definitions
+- prerequisite: Install required software (Node.js, Docker, etc.)
+- setup: Clone repo, configure environment, copy files
+- build: Compile, bundle, or build the application
+- deploy: Start services, configure web server
+- verify: Test that deployment is working
+
+Output ONLY valid JSON, no markdown code fence, no explanation."""
+
+        return prompt
+
+    def _create_deployment_plan(
+        self,
+        context: dict,
+        repo_context: Optional["RepoContext"] = None,
+    ) -> Optional[DeploymentPlan]:
+        """
+        让 LLM 生成部署计划。
+        
+        Args:
+            context: 部署上下文（主机信息、仓库URL等）
+            repo_context: 仓库分析结果
+            
+        Returns:
+            DeploymentPlan 或 None（如果生成失败）
+        """
+        import time
+        
+        prompt = self._build_planning_prompt(context)
+        
+        url = f"{self.base_endpoint}?key={self.config.api_key}"
+        body = {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.0,  # 规划阶段使用低温度保证一致性
+                "responseMimeType": "application/json",
+            },
+        }
+        
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self.session.post(url, json=body, timeout=self.planning_timeout)
+                
+                if response.status_code == 429:
+                    wait_time = 30 * (attempt + 1)
+                    logger.warning(f"Rate limited during planning. Waiting {wait_time}s...")
+                    time.sleep(wait_time)
+                    continue
+                
+                response.raise_for_status()
+                data = response.json()
+                
+                # 提取响应文本
+                candidates = data.get("candidates") or []
+                for candidate in candidates:
+                    parts = candidate.get("content", {}).get("parts", [])
+                    for part in parts:
+                        text = part.get("text")
+                        if text:
+                            return self._parse_plan(text)
+                
+                logger.error("No response from LLM during planning")
+                return None
+                
+            except requests.exceptions.HTTPError as e:
+                if response.status_code == 429 and attempt < max_retries - 1:
+                    wait_time = 30 * (attempt + 1)
+                    logger.warning(f"Rate limited. Waiting {wait_time}s...")
+                    time.sleep(wait_time)
+                    continue
+                logger.error(f"LLM API call failed during planning: {e}")
+                return None
+            except Exception as exc:
+                logger.error(f"Planning failed: {exc}")
+                return None
+        
+        return None
+
+    def _parse_plan(self, llm_response: str) -> Optional[DeploymentPlan]:
+        """解析 LLM 返回的 JSON 计划"""
+        try:
+            # 清理可能的 markdown 代码块
+            text = llm_response.strip()
+            if text.startswith("```"):
+                lines = text.split("\n")
+                text = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
+            
+            data = json.loads(text)
+            
+            # 解析步骤
+            steps = []
+            for step_data in data.get("steps", []):
+                step = DeploymentStep(
+                    id=step_data.get("id", len(steps) + 1),
+                    name=step_data.get("name", "Unnamed step"),
+                    description=step_data.get("description", ""),
+                    category=step_data.get("category", "setup"),
+                    estimated_commands=step_data.get("estimated_commands", []),
+                    success_criteria=step_data.get("success_criteria", ""),
+                    depends_on=step_data.get("depends_on", []),
+                )
+                steps.append(step)
+            
+            plan = DeploymentPlan(
+                strategy=data.get("strategy", "traditional"),
+                components=data.get("components", []),
+                steps=steps,
+                risks=data.get("risks", []),
+                notes=data.get("notes", []),
+                estimated_time=data.get("estimated_time", "unknown"),
+            )
+            
+            return plan
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse deployment plan: {e}")
+            logger.debug(f"Raw response: {llm_response[:500]}")
+            return None
+        except Exception as e:
+            logger.error(f"Error parsing plan: {e}")
+            return None
+
+    def _display_plan(self, plan: DeploymentPlan) -> None:
+        """在控制台展示计划供用户审查"""
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("📋 DEPLOYMENT PLAN")
+        logger.info("=" * 60)
+        logger.info("")
+        logger.info(f"Strategy: {plan.strategy.upper()}")
+        logger.info(f"Components: {', '.join(plan.components) if plan.components else 'None'}")
+        logger.info(f"Estimated Time: {plan.estimated_time}")
+        logger.info("")
+        
+        # 显示步骤
+        logger.info("Steps:")
+        for step in plan.steps:
+            category_emoji = {
+                "prerequisite": "🔧",
+                "setup": "📦",
+                "build": "🏗️",
+                "deploy": "🚀",
+                "verify": "✅",
+            }.get(step.category, "•")
+            logger.info(f"  {step.id}. {category_emoji} [{step.category.upper()}] {step.name}")
+            if step.description:
+                logger.info(f"      {step.description}")
+        
+        # 显示风险
+        if plan.risks:
+            logger.info("")
+            logger.info("⚠️  Identified Risks:")
+            for risk in plan.risks:
+                logger.info(f"  - {risk}")
+        
+        # 显示注意事项
+        if plan.notes:
+            logger.info("")
+            logger.info("📝 Notes:")
+            for note in plan.notes:
+                logger.info(f"  - {note}")
+        
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("")
+
+    def _ask_plan_approval(self, plan: DeploymentPlan) -> InteractionResponse:
+        """询问用户是否批准部署计划"""
+        # 构建选项
+        options = [
+            "Yes, proceed with this plan",
+            "No, cancel deployment",
+        ]
+        
+        # 构建上下文信息
+        context_info = f"Strategy: {plan.strategy}\nSteps: {len(plan.steps)}\nEstimated: {plan.estimated_time}"
+        
+        request = InteractionRequest(
+            question="Do you want to proceed with this deployment plan?",
+            input_type=InputType.CHOICE,
+            options=options,
+            category=QuestionCategory.CONFIRMATION,
+            context=context_info,
+            default="Yes, proceed with this plan",
+            allow_custom=False,
+        )
+        
+        response = self.interaction_handler.ask(request)
+        
+        # 如果用户选择取消，标记为 cancelled
+        if response.value and "No" in response.value:
+            response.cancelled = True
+        
+        return response
+
+    def _get_plan_context_for_prompt(self) -> str:
+        """获取计划上下文用于执行阶段的 prompt"""
+        if not self.current_plan:
+            return ""
+        
+        plan = self.current_plan
+        total_steps = len(plan.steps)
+        
+        # 构建计划概览
+        lines = [
+            "# 📋 Deployment Plan (Follow This!)",
+            f"Strategy: {plan.strategy}",
+            f"Progress: Step {self.current_plan_step + 1} of {total_steps}",
+            "",
+            "## Steps Overview:",
+        ]
+        
+        for step in plan.steps:
+            status = "✅" if step.id <= self.current_plan_step else ("🔄" if step.id == self.current_plan_step + 1 else "⬜")
+            lines.append(f"  {status} {step.id}. {step.name}")
+        
+        # 当前步骤详情
+        if self.current_plan_step < total_steps:
+            current = plan.steps[self.current_plan_step]
+            lines.extend([
+                "",
+                f"## 🎯 Current Step: {current.name}",
+                f"Description: {current.description}",
+                f"Category: {current.category}",
+                f"Success Criteria: {current.success_criteria}",
+            ])
+            if current.estimated_commands:
+                lines.append("Suggested Commands:")
+                for cmd in current.estimated_commands:
+                    lines.append(f"  - {cmd}")
+        
+        # 风险提醒
+        if plan.risks:
+            lines.extend(["", "## ⚠️ Known Risks:"])
+            for risk in plan.risks:
+                lines.append(f"  - {risk}")
+        
+        lines.append("")
+        return "\n".join(lines)
+
+    def _advance_plan_step(self) -> None:
+        """推进到计划的下一步"""
+        if self.current_plan and self.current_plan_step < len(self.current_plan.steps):
+            self.current_plan_step += 1
+            
+            # 更新日志
+            if "plan_execution" in self.deployment_log:
+                self.deployment_log["plan_execution"]["current_step"] = self.current_plan_step
+
+    def _mark_step_completed(self, step_id: int) -> None:
+        """标记步骤为已完成"""
+        if "plan_execution" in self.deployment_log:
+            if step_id not in self.deployment_log["plan_execution"]["completed_steps"]:
+                self.deployment_log["plan_execution"]["completed_steps"].append(step_id)

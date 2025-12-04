@@ -7,7 +7,10 @@
     "temperature": 0.0
   },
   "agent": {
-    "max_iterations": 40
+    "max_iterations": 40,
+    "enable_planning": true,
+    "require_plan_approval": false,
+    "planning_timeout": 60
   },
   "deployment": {
     "workspace_root": ".auto-deployer/workspace",

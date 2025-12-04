@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 import paramiko
+import socket
 
 from .credentials import SSHCredentials
 
@@ -84,10 +85,40 @@ class SSHSession:
             self._client.close()
             self._client = None
 
-    def run(self, command: str, *, timeout: Optional[int] = None, stream_output: bool = True) -> SSHCommandResult:
+    def run(
+        self,
+        command: str,
+        *,
+        timeout: Optional[int] = None,
+        idle_timeout: int = 60,
+        stream_output: bool = True,
+    ) -> SSHCommandResult:
+        """
+        Execute a command on the remote server.
+        
+        Args:
+            command: The command to execute
+            timeout: Total timeout in seconds (default: 600 for stream mode)
+            idle_timeout: Timeout for no output activity (default: 60 seconds)
+            stream_output: Whether to stream output in real-time
+            
+        Returns:
+            SSHCommandResult with command output and exit status
+            
+        Note:
+            The idle_timeout helps detect commands that are waiting for input
+            (like newgrp, su -, passwd) which would otherwise block forever.
+        """
         if not self._client:
             self.connect()
         assert self._client is not None
+        
+        import time
+        import re
+        
+        # 设置默认总超时
+        if timeout is None:
+            timeout = 600  # 默认10分钟总超时
         
         # 预处理命令：加载常用环境（nvm 等）
         # 这样 node/npm 命令可以正常工作
@@ -98,7 +129,6 @@ class SSHSession:
         needs_sudo_password = "sudo " in command and self.sudo_password
         if needs_sudo_password:
             # 替换所有的 sudo 为 sudo -S（除非已经是 sudo -S）
-            import re
             actual_command = re.sub(r'\bsudo\s+(?!-S)', 'sudo -S ', actual_command)
         
         # 添加环境前缀
@@ -111,6 +141,10 @@ class SSHSession:
             stdin.write(self.sudo_password + "\n")
             stdin.flush()
         
+        # 记录时间
+        start_time = time.time()
+        last_activity_time = time.time()
+        
         # 实时输出模式：边执行边显示输出
         if stream_output:
             import sys
@@ -122,12 +156,15 @@ class SSHSession:
             stderr.channel.setblocking(0)
             
             while not stdout.channel.exit_status_ready():
+                has_activity = False
+                
                 # 读取 stdout
                 while stdout.channel.recv_ready():
                     chunk = stdout.channel.recv(1024).decode("utf-8", errors="replace")
                     stdout_chunks.append(chunk)
                     sys.stdout.write(chunk)
                     sys.stdout.flush()
+                    has_activity = True
                 
                 # 读取 stderr
                 while stderr.channel.recv_stderr_ready():
@@ -135,9 +172,37 @@ class SSHSession:
                     stderr_chunks.append(chunk)
                     sys.stderr.write(chunk)
                     sys.stderr.flush()
+                    has_activity = True
+                
+                # 如果有输出活动，重置空闲计时器
+                if has_activity:
+                    last_activity_time = time.time()
+                
+                # 检查空闲超时（长时间无输出）
+                idle_time = time.time() - last_activity_time
+                if idle_time > idle_timeout:
+                    stdout.channel.close()
+                    return SSHCommandResult(
+                        command=command,
+                        stdout="".join(stdout_chunks).strip(),
+                        stderr=f"IDLE_TIMEOUT: No output for {idle_timeout} seconds. "
+                               f"Command may be waiting for input (like newgrp, su -, passwd, or interactive prompts). "
+                               f"Use non-interactive alternatives instead.",
+                        exit_status=-1,
+                    )
+                
+                # 检查总超时
+                total_time = time.time() - start_time
+                if total_time > timeout:
+                    stdout.channel.close()
+                    return SSHCommandResult(
+                        command=command,
+                        stdout="".join(stdout_chunks).strip(),
+                        stderr=f"TOTAL_TIMEOUT: Command exceeded {timeout} seconds total execution time.",
+                        exit_status=-2,
+                    )
                 
                 # 短暂休眠避免 CPU 占用过高
-                import time
                 time.sleep(0.1)
             
             # 读取剩余输出
@@ -157,10 +222,20 @@ class SSHSession:
             stdout_text = "".join(stdout_chunks)
             stderr_text = "".join(stderr_chunks)
         else:
-            # 原有模式：等待命令完成后返回
-            exit_status = stdout.channel.recv_exit_status()
-            stdout_text = stdout.read().decode("utf-8", errors="replace")
-            stderr_text = stderr.read().decode("utf-8", errors="replace")
+            # 原有模式：等待命令完成后返回（带超时保护）
+            stdout.channel.settimeout(float(timeout))
+            try:
+                exit_status = stdout.channel.recv_exit_status()
+                stdout_text = stdout.read().decode("utf-8", errors="replace")
+                stderr_text = stderr.read().decode("utf-8", errors="replace")
+            except socket.timeout:
+                stdout.channel.close()
+                return SSHCommandResult(
+                    command=command,
+                    stdout="",
+                    stderr=f"TIMEOUT: Command did not complete within {timeout} seconds.",
+                    exit_status=-1,
+                )
         
         return SSHCommandResult(
             command=command,
