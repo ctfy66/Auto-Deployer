@@ -82,6 +82,7 @@ agent = DeploymentAgent(llm_config, max_iterations=30)
 |------|------|------|
 | `auto_deployer.workflow` | 部署工作流编排 | [workflow.md](workflow.md) |
 | `auto_deployer.llm.agent` | LLM 驱动的 Agent | [agent.md](agent.md) |
+| `auto_deployer.orchestrator` | 部署规划与编排 | [deployment-planning.md](deployment-planning.md) |
 | `auto_deployer.analyzer` | 仓库分析 | [analyzer.md](analyzer.md) |
 | `auto_deployer.ssh` | SSH 会话管理 | [ssh.md](ssh.md) |
 | `auto_deployer.local` | 本地会话管理 | [local.md](local.md) |
@@ -111,13 +112,21 @@ agent = DeploymentAgent(llm_config, max_iterations=30)
 │  │ RepoAnalyzer│  │ SSHCreds    │  │   Agent     │        │
 │  └─────────────┘  └─────────────┘  └──────┬──────┘        │
 │                                           │                │
-│                   ┌───────────────────────┼───────┐       │
-│                   │                       │       │       │
-│                   ▼                       ▼       ▼       │
-│          ┌─────────────┐         ┌─────────────────────┐  │
-│          │ interaction │         │      knowledge      │  │
-│          │ Handler     │         │ Store, Retriever    │  │
-│          └─────────────┘         └─────────────────────┘  │
+│                   ┌───────────────────────┼───────────┐   │
+│                   │                       │           │   │
+│                   ▼                       ▼           ▼   │
+│          ┌─────────────┐      ┌─────────────────────────┐ │
+│          │ interaction │      │   orchestrator          │ │
+│          │ Handler     │      │ DeploymentOrchestrator  │ │
+│          └─────────────┘      │ StepExecutor            │ │
+│                               │ DeploymentPlanner       │ │
+│                               └──────────┬──────────────┘ │
+│                                         │                 │
+│                                         ▼                 │
+│                               ┌─────────────────────┐     │
+│                               │      knowledge      │     │
+│                               │ Store, Retriever    │     │
+│                               └─────────────────────┘     │
 │                                                             │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │                     config                           │   │
@@ -140,7 +149,11 @@ from auto_deployer import AppConfig, load_config
 from auto_deployer.workflow import DeploymentWorkflow, DeploymentRequest, LocalDeploymentRequest
 
 # Agent
-from auto_deployer.llm.agent import DeploymentAgent, AgentAction, CommandResult
+from auto_deployer.llm.agent import DeploymentAgent, AgentAction, CommandResult, DeploymentPlanner, DeploymentPlan, DeploymentStep
+
+# Orchestrator（部署规划与编排）
+from auto_deployer.orchestrator import DeploymentOrchestrator, StepExecutor
+from auto_deployer.orchestrator.models import DeployContext, StepContext, StepResult, StepStatus
 
 # 仓库分析
 from auto_deployer.analyzer import RepoAnalyzer, RepoContext

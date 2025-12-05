@@ -1,27 +1,34 @@
 # Auto-Deployer
 
-Auto-Deployer 是一个 LLM 驱动的自动化部署工具。只需提供 GitHub 仓库 URL 和 SSH 凭据，它就能自主完成项目的克隆、分析和部署。
+Auto-Deployer 是一个 LLM 驱动的自动化部署工具。只需提供 Git 仓库 URL，它就能自主分析项目、生成部署计划并完成部署。支持 SSH 远程部署和本地部署两种模式。
 
 ## 工作原理
 
+Auto-Deployer 采用**两阶段部署模式**：先规划后执行，确保部署过程可预测、可控制。
+
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   本地预分析     │ ──▶ │   SSH 连接      │ ──▶ │   Agent 部署    │
-│  克隆 + 读取     │     │   远程主机探测   │     │  LLM 自主执行   │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   本地预分析     │ ──▶ │   连接建立      │ ──▶ │   规划阶段      │ ──▶ │   执行阶段      │
+│  克隆 + 读取     │     │  SSH/本地探测   │     │  LLM 生成计划   │     │  按步骤执行     │
+└─────────────────┘     └─────────────────┘     └─────────────────┘     └─────────────────┘
 ```
 
 1. **本地预分析**：克隆仓库到本地，读取关键文件（README、package.json、requirements.txt、Dockerfile 等），识别项目类型和框架
-2. **SSH 连接**：建立到目标服务器的 SSH 会话，收集主机信息（操作系统、内核版本等）
-3. **Agent 部署**：将分析结果发送给 LLM，由 LLM 自主决定执行什么命令，直到部署完成或放弃
+2. **连接建立**：建立到目标环境的连接（SSH 远程服务器或本地），收集主机信息（操作系统、内核版本等）
+3. **规划阶段**：LLM 分析项目并生成结构化的部署计划（策略选择、步骤拆解、风险识别）
+4. **执行阶段**：按计划逐步执行，每个步骤内 LLM 自主决策，支持步骤级重试/跳过
 
 ## 特性
 
 - 🤖 **全自动部署**：LLM Agent 模式，无需人工干预
+- 📋 **智能规划**：两阶段部署（规划+执行），执行前生成完整部署计划，可预览和确认
 - 📦 **智能分析**：自动识别项目类型（Python/Node.js/静态网站等）和框架
 - 🔄 **自我修复**：遇到错误时 LLM 会分析日志并尝试修复
-- 📝 **详细日志**：每次部署的完整对话记录保存为 JSON 文件
+- 🎯 **步骤化执行**：将部署拆解为原子步骤，支持步骤级重试/跳过/中止
+- 💬 **用户交互**：关键决策点可询问用户（端口选择、配置值等）
+- 📝 **详细日志**：每次部署的完整对话记录保存为 JSON 文件，包含计划、步骤、命令历史
 - 🔧 **灵活配置**：支持环境变量和配置文件
+- 🖥️ **多平台支持**：支持 SSH 远程部署（Linux）和本地部署（Windows/Linux/Mac）
 
 ## 要求
 
@@ -58,6 +65,8 @@ HTTPS_PROXY=http://127.0.0.1:7890
 
 ### 2. 运行部署
 
+#### SSH 远程部署
+
 ```bash
 auto-deployer deploy \
     --repo git@github.com:username/project.git \
@@ -66,6 +75,16 @@ auto-deployer deploy \
     --auth-method password \
     --password yourpassword
 ```
+
+#### 本地部署（无需 SSH）
+
+```bash
+auto-deployer deploy \
+    --repo git@github.com:username/project.git \
+    --local
+```
+
+本地部署会在当前机器上执行，支持 Windows（PowerShell）和 Linux/Mac（Bash）。
 
 ### 3. 查看日志
 
@@ -112,7 +131,7 @@ auto-deployer logs --file deploy_project_20251202_120000.json
 | Gemini（推荐） | `"provider": "gemini"` | `AUTO_DEPLOYER_GEMINI_API_KEY` |
 | OpenAI         | `"provider": "openai"` | `AUTO_DEPLOYER_OPENAI_API_KEY` |
 
-推荐使用 **gemini-2.5-flash**，它在理解复杂项目和自我修复方面表现更好。
+推荐使用 **gemini-2.5-flash**，它在理解复杂项目、生成部署计划和自我修复方面表现更好。
 
 ### SSH 认证方式
 
@@ -121,21 +140,43 @@ auto-deployer logs --file deploy_project_20251202_120000.json
 
 ## 命令行参数
 
+### deploy 命令
+
 ```
 auto-deployer deploy [OPTIONS]
 
 必需参数：
   --repo        Git 仓库 URL（支持 SSH 和 HTTPS）
+
+远程部署必需：
   --host        目标服务器地址
   --user        SSH 用户名
+  --auth-method 认证方式：password 或 key
 
 可选参数：
-  --port        SSH 端口（默认 22）
-  --auth-method 认证方式：password 或 key
-  --password    SSH 密码
-  --key-path    SSH 私钥路径
+  --local, -L   本地部署模式（无需 SSH）
+  --deploy-dir  目标部署目录（默认：~/<repo_name>）
+  --port        SSH 端口（默认 22，仅远程部署）
+  --password    SSH 密码（auth-method=password 时）
+  --key-path    SSH 私钥路径（auth-method=key 时）
   --config      自定义配置文件路径
   --workspace   本地工作目录
+```
+
+### logs 命令
+
+```bash
+# 列出所有部署日志
+auto-deployer logs --list
+
+# 查看最近一次部署
+auto-deployer logs --latest
+
+# 查看特定日志
+auto-deployer logs --file deploy_project_20251202_120000.json
+
+# 仅显示摘要
+auto-deployer logs --latest --summary
 ```
 
 ## 项目结构
@@ -148,20 +189,56 @@ src/auto_deployer/
 ├── analyzer/           # 仓库分析模块
 │   └── repo_analyzer.py
 ├── llm/                # LLM 提供商
-│   ├── agent.py        # Agent 核心逻辑
+│   ├── agent.py        # Agent 核心逻辑（包含规划功能）
 │   ├── gemini.py
 │   └── openai.py
+├── orchestrator/       # 部署规划与编排
+│   ├── orchestrator.py # 部署编排器
+│   ├── step_executor.py# 步骤执行器
+│   ├── models.py       # 数据模型
+│   └── prompts.py      # Prompt 模板
 ├── ssh/                # SSH 会话管理
 │   ├── session.py
 │   └── probe.py
+├── local/              # 本地会话管理
+│   ├── session.py
+│   └── probe.py
+├── interaction/        # 用户交互处理
+│   └── handler.py
+├── knowledge/          # 经验存储与检索（可选）
+│   ├── store.py
+│   └── retriever.py
 └── workspace/          # 工作空间管理
     └── manager.py
+```
+
+## 部署模式
+
+### 规划模式（推荐）
+
+默认启用，两阶段部署：
+1. **规划阶段**：LLM 分析项目并生成结构化部署计划
+2. **执行阶段**：按计划逐步执行，每个步骤内 LLM 自主决策
+
+**优势**：
+- ✅ 可预测：执行前可查看完整计划
+- ✅ 可控制：步骤失败时可选择重试/跳过/中止
+- ✅ 可追踪：结构化日志记录每个步骤的执行细节
+
+### 响应式模式
+
+传统模式，边执行边思考（可通过配置禁用规划功能）。
+
+## 文档
+
+- 📖 [模块参考文档](docs/modules/index.md) - 完整的 API 参考
+- 📋 [部署规划功能](docs/modules/deployment-planning.md) - 规划功能的详细说明
+- 💡 [使用示例](docs/examples/deployment-planning-example.md) - 实际使用场景
+- 🏗️ [架构设计](docs/architecture.md) - 系统架构说明
+- ⌨️ [CLI 参考](docs/cli-reference.md) - 命令行详细说明
 
 
-## 已知限制
 
-- 目前假设目标服务器是 Linux 系统
-- 不支持需要交互式输入的部署流程
 
 ## License
 
