@@ -4,19 +4,25 @@ from __future__ import annotations
 
 import os
 import logging
+import platform
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
 
 from .analyzer import RepoAnalyzer, RepoContext
 from .config import AppConfig
-from .interaction import UserInteractionHandler, CLIInteractionHandler
-from .llm.agent import DeploymentAgent
+from .interaction import UserInteractionHandler, CLIInteractionHandler, InteractionRequest, InputType, QuestionCategory
+from .llm.agent import DeploymentAgent, DeploymentPlanner
 from .local import LocalSession, LocalProbe, LocalHostFacts
 from .ssh import RemoteHostFacts, RemoteProbe, SSHCredentials, SSHSession
 from .utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def _get_repo_name(repo_url: str) -> str:
+    """从仓库 URL 提取仓库名"""
+    return repo_url.rstrip("/").split("/")[-1].replace(".git", "")
 
 
 @dataclass
@@ -178,7 +184,109 @@ class DeploymentWorkflow:
         repo_context: Optional[RepoContext] = None,
     ) -> None:
         """使用 Agent 模式本地部署。"""
-        logger.info("🤖 Running in Local Agent mode")
+        # 检查是否使用新的 Orchestrator 模式
+        use_orchestrator = getattr(self.config.agent, 'use_orchestrator', True)
+        
+        if use_orchestrator and self.config.agent.enable_planning:
+            self._run_local_orchestrator_mode(request, host_facts, session, repo_context)
+        else:
+            self._run_local_legacy_agent_mode(request, host_facts, session, repo_context)
+    
+    def _run_local_orchestrator_mode(
+        self,
+        request: LocalDeploymentRequest,
+        host_facts: Optional[LocalHostFacts],
+        session: LocalSession,
+        repo_context: Optional[RepoContext] = None,
+    ) -> None:
+        """使用新的 Orchestrator 模式本地部署（步骤独立执行）"""
+        from .orchestrator import DeploymentOrchestrator, DeployContext
+        
+        logger.info("🤖 Running in Local Orchestrator mode (step-based execution)")
+        logger.info("   💬 Interactive mode enabled - Agent can ask for your input")
+        
+        if repo_context:
+            logger.info("   (with pre-analyzed repository context)")
+        
+        # 判断是否为 Windows
+        is_windows = platform.system() == "Windows"
+        
+        # 1. 创建部署上下文
+        repo_name = _get_repo_name(request.repo_url)
+        deploy_dir = request.deploy_dir or os.path.join(os.path.expanduser("~"), repo_name)
+        
+        deploy_ctx = DeployContext(
+            repo_url=request.repo_url,
+            deploy_dir=deploy_dir,
+            host_info=host_facts.to_payload() if host_facts else {"os_name": platform.system()},
+            repo_analysis=repo_context.to_prompt_context() if repo_context else None,
+            project_type=repo_context.project_type if repo_context else None,
+            framework=repo_context.detected_framework if repo_context else None,
+        )
+        
+        # 2. 生成部署计划
+        logger.info("📋 Phase 1: Creating deployment plan...")
+        planner = DeploymentPlanner(
+            self.config.llm,
+            planning_timeout=self.config.agent.planning_timeout,
+        )
+        
+        plan = planner.create_plan(
+            repo_url=request.repo_url,
+            deploy_dir=deploy_dir,
+            host_info=deploy_ctx.host_info,
+            repo_analysis=deploy_ctx.repo_analysis,
+            project_type=deploy_ctx.project_type,
+            framework=deploy_ctx.framework,
+            is_local=True,
+        )
+        
+        if not plan:
+            logger.error("Failed to create deployment plan, falling back to legacy mode")
+            self._run_local_legacy_agent_mode(request, host_facts, session, repo_context)
+            return
+        
+        # 3. 显示计划
+        DeploymentPlanner.display_plan(plan)
+        
+        # 4. 用户确认（如果需要）
+        if self.config.agent.require_plan_approval:
+            if not self._ask_plan_approval(plan):
+                logger.info("❌ User cancelled deployment")
+                return
+        
+        # 5. 使用 Orchestrator 执行
+        logger.info("🚀 Phase 2: Executing deployment plan...")
+        
+        max_per_step = max(5, self.config.agent.max_iterations // max(len(plan.steps), 1))
+        
+        orchestrator = DeploymentOrchestrator(
+            llm_config=self.config.llm,
+            session=session,
+            interaction_handler=self.interaction_handler,
+            max_iterations_per_step=max_per_step,
+            is_windows=is_windows,
+        )
+        
+        success = orchestrator.run(plan, deploy_ctx)
+        
+        if success:
+            logger.info("🎉 Local deployment completed successfully!")
+            # 自动提取经验
+            if orchestrator.current_log_file:
+                self._auto_extract_from_log(str(orchestrator.current_log_file))
+        else:
+            logger.error("💥 Local deployment failed")
+    
+    def _run_local_legacy_agent_mode(
+        self,
+        request: LocalDeploymentRequest,
+        host_facts: Optional[LocalHostFacts],
+        session: LocalSession,
+        repo_context: Optional[RepoContext] = None,
+    ) -> None:
+        """使用传统 Agent 模式本地部署（单一循环）"""
+        logger.info("🤖 Running in Local Legacy Agent mode")
         logger.info("   💬 Interactive mode enabled - Agent can ask for your input")
         
         if repo_context:
@@ -202,6 +310,9 @@ class DeploymentWorkflow:
         
         if success:
             logger.info("🎉 Local deployment completed successfully!")
+            # 自动提取经验
+            if agent.current_log_file:
+                self._auto_extract_from_log(str(agent.current_log_file))
         else:
             logger.error("💥 Local deployment failed")
 
@@ -213,7 +324,107 @@ class DeploymentWorkflow:
         repo_context: Optional[RepoContext] = None,
     ) -> None:
         """使用 Agent 模式：LLM 主导部署，使用预分析的仓库上下文。"""
-        logger.info("🤖 Running in Agent mode - LLM will autonomously control deployment")
+        # 检查是否使用新的 Orchestrator 模式
+        use_orchestrator = getattr(self.config.agent, 'use_orchestrator', True)
+        
+        if use_orchestrator and self.config.agent.enable_planning:
+            self._run_orchestrator_mode(request, host_facts, session, repo_context)
+        else:
+            self._run_legacy_agent_mode(request, host_facts, session, repo_context)
+    
+    def _run_orchestrator_mode(
+        self,
+        request: DeploymentRequest,
+        host_facts: Optional[RemoteHostFacts],
+        session: SSHSession,
+        repo_context: Optional[RepoContext] = None,
+    ) -> None:
+        """使用新的 Orchestrator 模式部署（步骤独立执行）"""
+        from .orchestrator import DeploymentOrchestrator, DeployContext
+        
+        logger.info("🤖 Running in Orchestrator mode (step-based execution)")
+        logger.info("   💬 Interactive mode enabled - Agent can ask for your input")
+        
+        if repo_context:
+            logger.info("   (with pre-analyzed repository context)")
+        
+        # 1. 创建部署上下文
+        repo_name = _get_repo_name(request.repo_url)
+        deploy_dir = request.deploy_dir or f"~/{repo_name}"
+        
+        deploy_ctx = DeployContext(
+            repo_url=request.repo_url,
+            deploy_dir=deploy_dir,
+            host_info=host_facts.to_payload() if host_facts else {"target": f"{request.username}@{request.host}"},
+            repo_analysis=repo_context.to_prompt_context() if repo_context else None,
+            project_type=repo_context.project_type if repo_context else None,
+            framework=repo_context.detected_framework if repo_context else None,
+        )
+        
+        # 2. 生成部署计划
+        logger.info("📋 Phase 1: Creating deployment plan...")
+        planner = DeploymentPlanner(
+            self.config.llm,
+            planning_timeout=self.config.agent.planning_timeout,
+        )
+        
+        plan = planner.create_plan(
+            repo_url=request.repo_url,
+            deploy_dir=deploy_dir,
+            host_info=deploy_ctx.host_info,
+            repo_analysis=deploy_ctx.repo_analysis,
+            project_type=deploy_ctx.project_type,
+            framework=deploy_ctx.framework,
+            is_local=False,
+        )
+        
+        if not plan:
+            logger.error("Failed to create deployment plan, falling back to legacy mode")
+            self._run_legacy_agent_mode(request, host_facts, session, repo_context)
+            return
+        
+        # 3. 显示计划
+        DeploymentPlanner.display_plan(plan)
+        
+        # 4. 用户确认（如果需要）
+        if self.config.agent.require_plan_approval:
+            if not self._ask_plan_approval(plan):
+                logger.info("❌ User cancelled deployment")
+                return
+        
+        # 5. 使用 Orchestrator 执行
+        logger.info("🚀 Phase 2: Executing deployment plan...")
+        
+        # 计算每个步骤的最大迭代次数
+        max_per_step = max(5, self.config.agent.max_iterations // max(len(plan.steps), 1))
+        
+        orchestrator = DeploymentOrchestrator(
+            llm_config=self.config.llm,
+            session=session,
+            interaction_handler=self.interaction_handler,
+            max_iterations_per_step=max_per_step,
+            is_windows=False,
+        )
+        
+        success = orchestrator.run(plan, deploy_ctx)
+        
+        if success:
+            logger.info("🎉 Deployment completed successfully!")
+            # 自动提取经验
+            if orchestrator.current_log_file:
+                self._auto_extract_from_log(str(orchestrator.current_log_file))
+        else:
+            logger.error("💥 Deployment failed")
+    
+    def _run_legacy_agent_mode(
+        self,
+        request: DeploymentRequest,
+        host_facts: Optional[RemoteHostFacts],
+        session: SSHSession,
+        repo_context: Optional[RepoContext] = None,
+    ) -> None:
+        """使用传统 Agent 模式（单一循环）"""
+        logger.info("🤖 Running in Legacy Agent mode - LLM will autonomously control deployment")
         logger.info("   💬 Interactive mode enabled - Agent can ask for your input")
         
         if repo_context:
@@ -237,8 +448,29 @@ class DeploymentWorkflow:
         
         if success:
             logger.info("🎉 Agent deployment completed successfully!")
+            # 自动提取经验
+            if agent.current_log_file:
+                self._auto_extract_from_log(str(agent.current_log_file))
         else:
             logger.error("💥 Agent deployment failed")
+    
+    def _ask_plan_approval(self, plan) -> bool:
+        """询问用户是否批准部署计划"""
+        request = InteractionRequest(
+            question="Do you want to proceed with this deployment plan?",
+            input_type=InputType.CHOICE,
+            options=["Yes, proceed with this plan", "No, cancel deployment"],
+            category=QuestionCategory.CONFIRMATION,
+            context=f"Strategy: {plan.strategy}\nSteps: {len(plan.steps)}\nEstimated: {plan.estimated_time}",
+            default="Yes, proceed with this plan",
+            allow_custom=False,
+        )
+        
+        response = self.interaction_handler.ask(request)
+        
+        if response.cancelled or (response.value and "No" in response.value):
+            return False
+        return True
     
     def _get_experience_retriever(self):
         """尝试获取经验检索器，如果依赖未安装则返回 None"""
@@ -262,6 +494,43 @@ class DeploymentWorkflow:
         except Exception as e:
             logging.debug(f"Failed to load experience retriever: {e}")
         return None
+
+    def _auto_extract_from_log(self, log_path: str) -> None:
+        """部署成功后自动提取经验（仅代码提取，不用LLM精炼）"""
+        try:
+            from .knowledge import ExperienceStore, ExperienceExtractor
+            
+            extractor = ExperienceExtractor()
+            experiences = extractor.extract_from_log(Path(log_path))
+            
+            if not experiences:
+                return
+            
+            store = ExperienceStore()
+            added = 0
+            for exp in experiences:
+                if not store.raw_exists(exp.id):
+                    store.add_raw_experience(
+                        id=exp.id,
+                        content=exp.content,
+                        metadata={
+                            "project_type": exp.project_type or "unknown",
+                            "framework": exp.framework or "",
+                            "source_log": exp.source_log,
+                            "timestamp": exp.timestamp,
+                            "processed": "False",
+                        }
+                    )
+                    added += 1
+            
+            if added > 0:
+                logger.info(f"📥 Auto-extracted {added} experience(s) from this deployment")
+                
+        except ImportError:
+            # chromadb/sentence-transformers 未安装，静默跳过
+            pass
+        except Exception as e:
+            logger.debug(f"Auto-extract failed: {e}")
 
     def _create_remote_session(self, request: DeploymentRequest) -> Optional[SSHSession]:
         """Create an SSH session to the remote server."""

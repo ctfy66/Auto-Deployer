@@ -37,6 +37,8 @@ class AgentConfig:
     enable_planning: bool = True           # 是否启用规划阶段
     require_plan_approval: bool = False    # 是否需要用户确认计划
     planning_timeout: int = 60             # 规划超时（秒）
+    # 执行模式
+    use_orchestrator: bool = True          # 使用新的 Orchestrator 模式（步骤独立执行）
 
 
 @dataclass

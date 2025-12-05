@@ -1759,3 +1759,293 @@ Output ONLY valid JSON, no markdown code fence, no explanation."""
         if "plan_execution" in self.deployment_log:
             if step_id not in self.deployment_log["plan_execution"]["completed_steps"]:
                 self.deployment_log["plan_execution"]["completed_steps"].append(step_id)
+
+
+class DeploymentPlanner:
+    """
+    独立的部署计划生成器
+    
+    只负责生成部署计划，不负责执行。
+    用于配合 DeploymentOrchestrator 使用。
+    """
+    
+    def __init__(
+        self,
+        config: LLMConfig,
+        planning_timeout: int = 60,
+    ) -> None:
+        if not config.api_key:
+            raise ValueError("Planner requires an API key")
+        self.config = config
+        self.planning_timeout = planning_timeout
+        
+        self.session = requests.Session()
+        self._setup_proxy()
+        
+        self.base_endpoint = config.endpoint or (
+            f"https://generativelanguage.googleapis.com/v1beta/models/{config.model}:generateContent"
+        )
+    
+    def _setup_proxy(self) -> None:
+        """设置代理"""
+        import os
+        proxy = self.config.proxy or os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+        if proxy:
+            self.session.proxies = {"http": proxy, "https": proxy}
+            logger.debug("Planner using proxy: %s", proxy)
+    
+    def create_plan(
+        self,
+        repo_url: str,
+        deploy_dir: str,
+        host_info: dict,
+        repo_analysis: Optional[str] = None,
+        project_type: Optional[str] = None,
+        framework: Optional[str] = None,
+        is_local: bool = False,
+    ) -> Optional[DeploymentPlan]:
+        """
+        生成部署计划
+        
+        Args:
+            repo_url: 仓库 URL
+            deploy_dir: 部署目录
+            host_info: 主机信息
+            repo_analysis: 仓库分析结果（prompt 格式）
+            project_type: 项目类型
+            framework: 框架
+            is_local: 是否本地部署
+            
+        Returns:
+            DeploymentPlan 或 None
+        """
+        import time
+        
+        # 构建上下文
+        context = {
+            "repo_url": repo_url,
+            "deploy_dir": deploy_dir,
+            "project_type": project_type or "unknown",
+            "framework": framework or "unknown",
+            "repo_analysis": repo_analysis or "No repository analysis available.",
+            "mode": "local" if is_local else "remote",
+        }
+        
+        if is_local:
+            context["local_host"] = host_info
+        else:
+            context["ssh_target"] = host_info.get("target", "Remote server")
+        
+        prompt = self._build_planning_prompt(context)
+        
+        url = f"{self.base_endpoint}?key={self.config.api_key}"
+        body = {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.0,  # 规划阶段使用低温度保证一致性
+                "responseMimeType": "application/json",
+            },
+        }
+        
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self.session.post(url, json=body, timeout=self.planning_timeout)
+                
+                if response.status_code == 429:
+                    wait_time = 30 * (attempt + 1)
+                    logger.warning(f"Rate limited during planning. Waiting {wait_time}s...")
+                    time.sleep(wait_time)
+                    continue
+                
+                response.raise_for_status()
+                data = response.json()
+                
+                candidates = data.get("candidates") or []
+                for candidate in candidates:
+                    parts = candidate.get("content", {}).get("parts", [])
+                    for part in parts:
+                        text = part.get("text")
+                        if text:
+                            return self._parse_plan(text)
+                
+                logger.error("No response from LLM during planning")
+                return None
+                
+            except requests.exceptions.HTTPError as e:
+                if response.status_code == 429 and attempt < max_retries - 1:
+                    wait_time = 30 * (attempt + 1)
+                    logger.warning(f"Rate limited. Waiting {wait_time}s...")
+                    time.sleep(wait_time)
+                    continue
+                logger.error(f"LLM API call failed during planning: {e}")
+                return None
+            except Exception as exc:
+                logger.error(f"Planning failed: {exc}")
+                return None
+        
+        return None
+    
+    def _build_planning_prompt(self, context: dict) -> str:
+        """构建规划阶段的 prompt"""
+        repo_analysis = context.get("repo_analysis", "No repository analysis available.")
+        project_type = context.get("project_type", "unknown")
+        framework = context.get("framework", "unknown")
+        deploy_dir = context.get("deploy_dir", "~/app")
+        
+        is_local = context.get("mode") == "local"
+        if is_local:
+            target_info = f"Local machine ({context.get('local_host', {}).get('os_name', 'Unknown OS')})"
+        else:
+            target_info = context.get("ssh_target", "Remote server")
+        
+        prompt = f"""# Role
+You are a DevOps deployment planner. Analyze the repository and create a structured deployment plan.
+
+# Input
+- Repository: {context.get("repo_url")}
+- Deploy Directory: {deploy_dir}
+- Target: {target_info}
+- Project Type: {project_type}
+- Framework: {framework}
+
+# Repository Analysis
+{repo_analysis}
+
+# Task
+Create a deployment plan. Think carefully about:
+1. What deployment strategy is best? (Docker if Dockerfile exists, traditional otherwise)
+2. What components need to be installed? (Node.js, Python, Nginx, etc.)
+3. What are the exact steps to deploy this project?
+4. What could go wrong? (missing env files, build errors, etc.)
+
+Output a JSON object with this exact structure:
+```json
+{{
+  "strategy": "docker-compose|docker|traditional|static",
+  "components": ["list", "of", "required", "components"],
+  "steps": [
+    {{
+      "id": 1,
+      "name": "Short step name",
+      "description": "What this step does and why",
+      "category": "prerequisite|setup|build|deploy|verify",
+      "estimated_commands": ["command1", "command2"],
+      "success_criteria": "How to verify this step succeeded",
+      "depends_on": []
+    }}
+  ],
+  "risks": ["Potential risk 1", "Potential risk 2"],
+  "notes": ["Important note 1"],
+  "estimated_time": "5-10 minutes"
+}}
+```
+
+# Rules
+1. Choose the SIMPLEST strategy that works:
+   - If docker-compose.yml exists → use "docker-compose"
+   - If only Dockerfile exists → use "docker"
+   - If neither exists → use "traditional" or "static"
+2. Include ALL necessary steps (install dependencies, configure, build, deploy, verify)
+3. Each step should be atomic and independently verifiable
+4. Always include a final "verify" step to confirm deployment works
+5. Identify risks from repository analysis (e.g., missing .env, syntax errors in configs)
+6. Order steps by dependencies
+7. Make success_criteria specific and verifiable (e.g., "docker ps shows container running", "curl returns HTTP 200")
+
+# Category Definitions
+- prerequisite: Install required software (Node.js, Docker, etc.)
+- setup: Clone repo, configure environment, copy files
+- build: Compile, bundle, or build the application
+- deploy: Start services, configure web server
+- verify: Test that deployment is working
+
+Output ONLY valid JSON, no markdown code fence, no explanation."""
+
+        return prompt
+    
+    def _parse_plan(self, llm_response: str) -> Optional[DeploymentPlan]:
+        """解析 LLM 返回的 JSON 计划"""
+        try:
+            text = llm_response.strip()
+            if text.startswith("```"):
+                lines = text.split("\n")
+                text = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
+            
+            data = json.loads(text)
+            
+            steps = []
+            for step_data in data.get("steps", []):
+                step = DeploymentStep(
+                    id=step_data.get("id", len(steps) + 1),
+                    name=step_data.get("name", "Unnamed step"),
+                    description=step_data.get("description", ""),
+                    category=step_data.get("category", "setup"),
+                    estimated_commands=step_data.get("estimated_commands", []),
+                    success_criteria=step_data.get("success_criteria", ""),
+                    depends_on=step_data.get("depends_on", []),
+                )
+                steps.append(step)
+            
+            plan = DeploymentPlan(
+                strategy=data.get("strategy", "traditional"),
+                components=data.get("components", []),
+                steps=steps,
+                risks=data.get("risks", []),
+                notes=data.get("notes", []),
+                estimated_time=data.get("estimated_time", "unknown"),
+            )
+            
+            return plan
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse deployment plan: {e}")
+            logger.debug(f"Raw response: {llm_response[:500]}")
+            return None
+        except Exception as e:
+            logger.error(f"Error parsing plan: {e}")
+            return None
+    
+    @staticmethod
+    def display_plan(plan: DeploymentPlan) -> None:
+        """在控制台展示计划供用户审查"""
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("📋 DEPLOYMENT PLAN")
+        logger.info("=" * 60)
+        logger.info("")
+        logger.info(f"Strategy: {plan.strategy.upper()}")
+        logger.info(f"Components: {', '.join(plan.components) if plan.components else 'None'}")
+        logger.info(f"Estimated Time: {plan.estimated_time}")
+        logger.info("")
+        
+        logger.info("Steps:")
+        for step in plan.steps:
+            category_emoji = {
+                "prerequisite": "🔧",
+                "setup": "📦",
+                "build": "🏗️",
+                "deploy": "🚀",
+                "verify": "✅",
+            }.get(step.category, "•")
+            logger.info(f"  {step.id}. {category_emoji} [{step.category.upper()}] {step.name}")
+            if step.description:
+                logger.info(f"      {step.description}")
+            if step.success_criteria:
+                logger.info(f"      ✓ Success: {step.success_criteria}")
+        
+        if plan.risks:
+            logger.info("")
+            logger.info("⚠️  Identified Risks:")
+            for risk in plan.risks:
+                logger.info(f"  - {risk}")
+        
+        if plan.notes:
+            logger.info("")
+            logger.info("📝 Notes:")
+            for note in plan.notes:
+                logger.info(f"  - {note}")
+        
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("")
