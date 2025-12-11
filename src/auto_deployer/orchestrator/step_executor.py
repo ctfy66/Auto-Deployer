@@ -15,6 +15,7 @@ from .models import (
     CommandRecord, StepStatus, DeployContext
 )
 from .prompts import STEP_EXECUTION_PROMPT, STEP_EXECUTION_PROMPT_WINDOWS
+from ..llm.output_extractor import CommandOutputExtractor
 
 if TYPE_CHECKING:
     from ..ssh import SSHSession
@@ -55,6 +56,12 @@ class StepExecutor:
         # LLM endpoint
         self.base_endpoint = llm_config.endpoint or (
             f"https://generativelanguage.googleapis.com/v1beta/models/{llm_config.model}:generateContent"
+        )
+
+        # 输出提取器
+        self.output_extractor = CommandOutputExtractor(
+            max_success_lines=30,
+            max_error_lines=50
         )
     
     def _setup_proxy(self) -> None:
@@ -257,15 +264,28 @@ class StepExecutor:
             )
     
     def _execute_command(self, command: str) -> CommandRecord:
-        """执行命令"""
+        """执行命令并智能提取输出"""
         try:
             result = self.session.run(command, timeout=120)
+
+            # 使用智能提取器处理输出
+            extracted = self.output_extractor.extract(
+                stdout=result.stdout or "",
+                stderr=result.stderr or "",
+                success=result.ok,
+                exit_code=result.exit_status,
+                command=command
+            )
+
+            # 返回包含提取后输出的CommandRecord
             return CommandRecord(
                 command=command,
                 success=result.ok,
                 exit_code=result.exit_status,
-                stdout=result.stdout[:2000] if result.stdout else "",
-                stderr=result.stderr[:2000] if result.stderr else "",
+                # 使用提取后的输出替代原始截断输出
+                stdout=self.output_extractor.format_for_llm(extracted),
+                stderr="",  # 错误已整合到stdout的格式化输出中
+                timestamp=extracted.summary if hasattr(extracted, 'summary') else ""
             )
         except Exception as e:
             logger.error(f"Command execution error: {e}")
@@ -275,6 +295,7 @@ class StepExecutor:
                 exit_code=-1,
                 stdout="",
                 stderr=str(e),
+                timestamp=""
             )
     
     def _ask_user(self, action: StepAction) -> dict:

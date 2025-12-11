@@ -21,6 +21,7 @@ from ..interaction import (
     InputType,
     QuestionCategory,
 )
+from .output_extractor import CommandOutputExtractor
 
 if TYPE_CHECKING:
     from ..ssh import RemoteHostFacts
@@ -173,19 +174,31 @@ class DeploymentAgent:
         # 用户交互历史（发送给 LLM）
         self.user_interactions: List[dict] = []
         
-        # 设置代理 - 优先使用配置文件，其次使用环境变量
+        # Initialize LLM provider
+        from .base import create_llm_provider
+        self.llm_provider = create_llm_provider(config)
+        logger.info("Using LLM provider: %s (model: %s)", config.provider, config.model)
+
+        # Keep session for backward compatibility (not used with new providers)
+        self.session = requests.Session()
         import os
         proxy = config.proxy or os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
         if proxy:
             self.session.proxies = {"http": proxy, "https": proxy}
-            logger.info("Agent using proxy: %s", proxy)
-        
+
+        # Legacy endpoint (for backward compatibility only)
         self.base_endpoint = config.endpoint or (
             f"https://generativelanguage.googleapis.com/v1beta/models/{config.model}:generateContent"
         )
-        
+
         # 执行历史
         self.history: List[dict] = []
+
+        # 输出提取器
+        self.output_extractor = CommandOutputExtractor(
+            max_success_lines=30,  # 成功时最多30行
+            max_error_lines=50     # 失败时最多50行
+        )
 
     def deploy(
         self,
@@ -340,25 +353,36 @@ class DeploymentAgent:
                 
                 # 执行命令
                 result = self._execute_command(ssh_session, action.command)
-                
-                # 记录命令结果
+
+                # 使用智能提取器处理输出
+                extracted = self.output_extractor.extract(
+                    stdout=result.stdout or "",
+                    stderr=result.stderr or "",
+                    success=result.success,
+                    exit_code=result.exit_code,
+                    command=action.command
+                )
+
+                # 记录命令结果（完整保存到日志文件）
                 step_log["result"] = {
                     "success": result.success,
                     "exit_code": result.exit_code,
                     "stdout": result.stdout[:2000] if result.stdout else "",
                     "stderr": result.stderr[:2000] if result.stderr else "",
+                    "extracted_summary": extracted.summary,
                 }
                 self.deployment_log["steps"].append(step_log)
-                
-                # 记录到历史
+
+                # 记录到历史（使用提取后的输出，节省上下文）
                 self.history.append({
                     "iteration": iteration,
                     "reasoning": action.reasoning,
                     "command": action.command,
                     "success": result.success,
                     "exit_code": result.exit_code,
-                    "stdout": result.stdout[:1000] if result.stdout else "",
-                    "stderr": result.stderr[:1000] if result.stderr else "",
+                    "output_summary": extracted.summary,
+                    "key_info": extracted.key_info[:5],  # 最多5条关键信息
+                    "error_context": extracted.error_context[:500] if extracted.error_context else None,
                 })
                 
                 # 显示结果
@@ -760,57 +784,21 @@ class DeploymentAgent:
 
     def _think_local(self, context: dict) -> AgentAction:
         """Ask LLM to decide the next action for local deployment."""
-        import time
-        
         prompt = self._build_local_prompt(context)
-        
-        url = f"{self.base_endpoint}?key={self.config.api_key}"
-        body = {
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": self.config.temperature,
-                "responseMimeType": "application/json",
-            },
-        }
-        
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = self.session.post(url, json=body, timeout=60)
-                
-                if response.status_code == 429:
-                    wait_time = 30 * (attempt + 1)
-                    logger.warning(f"Rate limited. Waiting {wait_time}s before retry...")
-                    time.sleep(wait_time)
-                    continue
-                    
-                response.raise_for_status()
-                data = response.json()
-                
-                candidates = data.get("candidates") or []
-                for candidate in candidates:
-                    parts = candidate.get("content", {}).get("parts", [])
-                    for part in parts:
-                        text = part.get("text")
-                        if text:
-                            return self._parse_action(text)
-                
-                logger.error("No response from LLM")
-                return AgentAction(action_type="failed", message="No LLM response")
-                
-            except requests.exceptions.HTTPError as e:
-                if response.status_code == 429 and attempt < max_retries - 1:
-                    wait_time = 30 * (attempt + 1)
-                    logger.warning(f"Rate limited. Waiting {wait_time}s before retry...")
-                    time.sleep(wait_time)
-                    continue
-                logger.error(f"LLM API call failed: {e}")
-                return AgentAction(action_type="failed", message=str(e))
-            except Exception as exc:
-                logger.error(f"LLM API call failed: {exc}")
-                return AgentAction(action_type="failed", message=str(exc))
-        
-        return AgentAction(action_type="failed", message="Rate limited after max retries")
+
+        # Use provider to generate response
+        text = self.llm_provider.generate_response(
+            prompt=prompt,
+            response_format="json",
+            timeout=60,
+            max_retries=3
+        )
+
+        if not text:
+            logger.error("No response from LLM")
+            return AgentAction(action_type="failed", message="No LLM response")
+
+        return self._parse_action(text)
 
     def _build_local_prompt(self, context: dict) -> str:
         """Build the prompt for local deployment."""
@@ -980,60 +968,21 @@ Respond with JSON:
 
     def _think(self, context: dict) -> AgentAction:
         """Ask LLM to decide the next action."""
-        import time
-        
         prompt = self._build_prompt(context)
-        
-        url = f"{self.base_endpoint}?key={self.config.api_key}"
-        body = {
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": self.config.temperature,
-                "responseMimeType": "application/json",
-            },
-        }
-        
-        # 重试机制处理速率限制
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = self.session.post(url, json=body, timeout=60)
-                
-                # 处理速率限制
-                if response.status_code == 429:
-                    wait_time = 30 * (attempt + 1)  # 30s, 60s, 90s
-                    logger.warning(f"Rate limited. Waiting {wait_time}s before retry...")
-                    time.sleep(wait_time)
-                    continue
-                    
-                response.raise_for_status()
-                data = response.json()
-                
-                # 提取响应文本
-                candidates = data.get("candidates") or []
-                for candidate in candidates:
-                    parts = candidate.get("content", {}).get("parts", [])
-                    for part in parts:
-                        text = part.get("text")
-                        if text:
-                            return self._parse_action(text)
-                
-                logger.error("No response from LLM")
-                return AgentAction(action_type="failed", message="No LLM response")
-                
-            except requests.exceptions.HTTPError as e:
-                if response.status_code == 429 and attempt < max_retries - 1:
-                    wait_time = 30 * (attempt + 1)
-                    logger.warning(f"Rate limited. Waiting {wait_time}s before retry...")
-                    time.sleep(wait_time)
-                    continue
-                logger.error(f"LLM API call failed: {e}")
-                return AgentAction(action_type="failed", message=str(e))
-            except Exception as exc:
-                logger.error(f"LLM API call failed: {exc}")
-                return AgentAction(action_type="failed", message=str(exc))
-        
-        return AgentAction(action_type="failed", message="Rate limited after max retries")
+
+        # Use provider to generate response
+        text = self.llm_provider.generate_response(
+            prompt=prompt,
+            response_format="json",
+            timeout=60,
+            max_retries=3
+        )
+
+        if not text:
+            logger.error("No response from LLM")
+            return AgentAction(action_type="failed", message="No LLM response")
+
+        return self._parse_action(text)
 
     def _parse_action(self, text: str) -> AgentAction:
         """Parse LLM response into an action."""
@@ -1570,14 +1519,14 @@ To ask user, use action="ask_user" with this format:
         # 添加用户交互指南到prompt
         system_prompt += "\n\n" + user_interaction_guide
 
-        # 构建当前状态
+        # 构建当前状态（使用智能提取后的历史）
         state = {
             "repo_url": context.get("repo_url"),
             "server": {
                 "target": context.get("ssh_target"),
                 "os": context.get("remote_host", {}).get("os_release") if context.get("remote_host") else "Linux",
             },
-            "command_history": self.history[-10:],  # 最近10条命令历史
+            "command_history": self._format_command_history(self.history[-10:]),  # 最近10条，格式化后
         }
         
         # 添加用户交互历史（如果有）
@@ -1637,8 +1586,44 @@ To ask user, use action="ask_user" with this format:
             parts.append("Use this information to proceed!")
         
         parts.append("\nBased on the above information, decide your next action. Respond with JSON only.")
-        
+
         return "\n".join(parts)
+
+    def _format_command_history(self, history: List[dict]) -> List[dict]:
+        """
+        格式化命令历史，使用提取后的输出而非完整输出
+
+        Args:
+            history: 原始历史记录列表
+
+        Returns:
+            格式化后的历史记录，适合发送给LLM
+        """
+        formatted = []
+        for entry in history:
+            # 构建精简的历史条目
+            formatted_entry = {
+                "iteration": entry.get("iteration"),
+                "command": entry.get("command"),
+                "success": entry.get("success"),
+                "exit_code": entry.get("exit_code"),
+            }
+
+            # 添加提取后的输出摘要
+            if "output_summary" in entry:
+                formatted_entry["summary"] = entry["output_summary"]
+
+            # 如果有关键信息，添加
+            if entry.get("key_info"):
+                formatted_entry["key_info"] = entry["key_info"]
+
+            # 如果失败且有错误上下文，添加
+            if not entry.get("success") and entry.get("error_context"):
+                formatted_entry["error"] = entry["error_context"]
+
+            formatted.append(formatted_entry)
+
+        return formatted
 
     # ========== 规划阶段方法 ==========
     
@@ -1727,66 +1712,36 @@ Output ONLY valid JSON, no markdown code fence, no explanation."""
     ) -> Optional[DeploymentPlan]:
         """
         让 LLM 生成部署计划。
-        
+
         Args:
             context: 部署上下文（主机信息、仓库URL等）
             repo_context: 仓库分析结果
-            
+
         Returns:
             DeploymentPlan 或 None（如果生成失败）
         """
-        import time
-        
         prompt = self._build_planning_prompt(context)
-        
-        url = f"{self.base_endpoint}?key={self.config.api_key}"
-        body = {
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.0,  # 规划阶段使用低温度保证一致性
-                "responseMimeType": "application/json",
-            },
-        }
-        
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = self.session.post(url, json=body, timeout=self.planning_timeout)
-                
-                if response.status_code == 429:
-                    wait_time = 30 * (attempt + 1)
-                    logger.warning(f"Rate limited during planning. Waiting {wait_time}s...")
-                    time.sleep(wait_time)
-                    continue
-                
-                response.raise_for_status()
-                data = response.json()
-                
-                # 提取响应文本
-                candidates = data.get("candidates") or []
-                for candidate in candidates:
-                    parts = candidate.get("content", {}).get("parts", [])
-                    for part in parts:
-                        text = part.get("text")
-                        if text:
-                            return self._parse_plan(text)
-                
-                logger.error("No response from LLM during planning")
-                return None
-                
-            except requests.exceptions.HTTPError as e:
-                if response.status_code == 429 and attempt < max_retries - 1:
-                    wait_time = 30 * (attempt + 1)
-                    logger.warning(f"Rate limited. Waiting {wait_time}s...")
-                    time.sleep(wait_time)
-                    continue
-                logger.error(f"LLM API call failed during planning: {e}")
-                return None
-            except Exception as exc:
-                logger.error(f"Planning failed: {exc}")
-                return None
-        
-        return None
+
+        # Use provider to generate plan (use temperature 0.0 for consistency)
+        # Temporarily override temperature
+        original_temp = self.llm_provider.temperature
+        self.llm_provider.temperature = 0.0
+
+        text = self.llm_provider.generate_response(
+            prompt=prompt,
+            response_format="json",
+            timeout=self.planning_timeout,
+            max_retries=3
+        )
+
+        # Restore original temperature
+        self.llm_provider.temperature = original_temp
+
+        if not text:
+            logger.error("No response from LLM during planning")
+            return None
+
+        return self._parse_plan(text)
 
     def _parse_plan(self, llm_response: str) -> Optional[DeploymentPlan]:
         """解析 LLM 返回的 JSON 计划"""
@@ -1894,7 +1849,7 @@ Output ONLY valid JSON, no markdown code fence, no explanation."""
             category=QuestionCategory.CONFIRMATION,
             context=context_info,
             default="Yes, proceed with this plan",
-            allow_custom=False,
+            allow_custom=True,
         )
         
         response = self.interaction_handler.ask(request)
@@ -1983,10 +1938,16 @@ class DeploymentPlanner:
             raise ValueError("Planner requires an API key")
         self.config = config
         self.planning_timeout = planning_timeout
-        
+
+        # Initialize LLM provider
+        from .base import create_llm_provider
+        self.llm_provider = create_llm_provider(config)
+        logger.info("Planner using LLM provider: %s (model: %s)", config.provider, config.model)
+
+        # Keep for backward compatibility
         self.session = requests.Session()
         self._setup_proxy()
-        
+
         self.base_endpoint = config.endpoint or (
             f"https://generativelanguage.googleapis.com/v1beta/models/{config.model}:generateContent"
         )
@@ -2043,54 +2004,26 @@ class DeploymentPlanner:
             context["ssh_target"] = host_info.get("target", "Remote server")
         
         prompt = self._build_planning_prompt(context)
-        
-        url = f"{self.base_endpoint}?key={self.config.api_key}"
-        body = {
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.0,  # 规划阶段使用低温度保证一致性
-                "responseMimeType": "application/json",
-            },
-        }
-        
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = self.session.post(url, json=body, timeout=self.planning_timeout)
-                
-                if response.status_code == 429:
-                    wait_time = 30 * (attempt + 1)
-                    logger.warning(f"Rate limited during planning. Waiting {wait_time}s...")
-                    time.sleep(wait_time)
-                    continue
-                
-                response.raise_for_status()
-                data = response.json()
-                
-                candidates = data.get("candidates") or []
-                for candidate in candidates:
-                    parts = candidate.get("content", {}).get("parts", [])
-                    for part in parts:
-                        text = part.get("text")
-                        if text:
-                            return self._parse_plan(text)
-                
-                logger.error("No response from LLM during planning")
-                return None
-                
-            except requests.exceptions.HTTPError as e:
-                if response.status_code == 429 and attempt < max_retries - 1:
-                    wait_time = 30 * (attempt + 1)
-                    logger.warning(f"Rate limited. Waiting {wait_time}s...")
-                    time.sleep(wait_time)
-                    continue
-                logger.error(f"LLM API call failed during planning: {e}")
-                return None
-            except Exception as exc:
-                logger.error(f"Planning failed: {exc}")
-                return None
-        
-        return None
+
+        # Use provider to generate plan (use temperature 0.0 for consistency)
+        original_temp = self.llm_provider.temperature
+        self.llm_provider.temperature = 0.0
+
+        text = self.llm_provider.generate_response(
+            prompt=prompt,
+            response_format="json",
+            timeout=self.planning_timeout,
+            max_retries=3
+        )
+
+        # Restore original temperature
+        self.llm_provider.temperature = original_temp
+
+        if not text:
+            logger.error("No response from LLM during planning")
+            return None
+
+        return self._parse_plan(text)
     
     def _build_planning_prompt(self, context: dict) -> str:
         """构建规划阶段的 prompt"""

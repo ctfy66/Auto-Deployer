@@ -67,7 +67,8 @@ class InteractionRequest:
                 default_marker = " (默认)" if self.default == option else ""
                 lines.append(f"   [{i}] {option}{default_marker}")
             if self.allow_custom:
-                lines.append(f"   [0] 输入自定义命令/值")
+                lines.append(f"   [0] 自定义输入 (您可以输入自己的指令或值)")
+                lines.append(f"   💡 提示: 您也可以直接输入文本作为自定义值")
         
         elif self.input_type == InputType.CONFIRM:
             default_hint = ""
@@ -211,15 +212,22 @@ class CLIInteractionHandler(UserInteractionHandler):
                 choice = int(user_input)
                 if choice == 0 and request.allow_custom:
                     # 自定义输入
-                    custom_value = input("   请输入自定义值: ").strip()
+                    custom_value = input("   💬 请输入自定义值 (例如命令、配置值等): ").strip()
+                    if not custom_value:
+                        print("   ⚠️  自定义值不能为空，请重新输入")
+                        continue
                     return InteractionResponse(value=custom_value, selected_option=0, is_custom=True)
                 elif 1 <= choice <= len(request.options):
                     return InteractionResponse.from_choice(choice, request.options)
                 else:
-                    print(f"   ❌ 无效选项，请输入 1-{len(request.options)}")
+                    if request.allow_custom:
+                        print(f"   ❌ 无效选项，请输入 0-{len(request.options)} 或直接输入文本")
+                    else:
+                        print(f"   ❌ 无效选项，请输入 1-{len(request.options)}")
             except ValueError:
                 # 直接输入文本作为自定义值
                 if request.allow_custom:
+                    print(f"   ✅ 已接收自定义输入: {user_input}")
                     return InteractionResponse(value=user_input, is_custom=True)
                 print("   ❌ 请输入有效的选项编号")
     

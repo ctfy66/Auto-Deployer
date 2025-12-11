@@ -209,7 +209,7 @@ class DeploymentOrchestrator:
             options=["Retry this step", "Skip and continue", "Abort deployment"],
             input_type=InputType.CHOICE,
             category=QuestionCategory.ERROR_RECOVERY,
-            allow_custom=False,
+            allow_custom=True,
         )
         response = self.interaction_handler.ask(request)
         

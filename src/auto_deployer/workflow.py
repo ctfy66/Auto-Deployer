@@ -475,7 +475,7 @@ class DeploymentWorkflow:
             category=QuestionCategory.CONFIRMATION,
             context=f"Strategy: {plan.strategy}\nSteps: {len(plan.steps)}\nEstimated: {plan.estimated_time}",
             default="Yes, proceed with this plan",
-            allow_custom=False,
+            allow_custom=True,
         )
         
         response = self.interaction_handler.ask(request)
