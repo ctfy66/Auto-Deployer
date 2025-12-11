@@ -21,6 +21,10 @@ class LocalHostFacts:
     python_version: str
     home_dir: str
     
+    # 环境特征
+    is_container: bool = False  # 是否在容器中运行
+    has_systemd: bool = False   # 是否使用 systemd
+    
     # 可用工具
     has_git: bool = False
     has_node: bool = False
@@ -39,6 +43,8 @@ class LocalHostFacts:
             "architecture": self.architecture,
             "python_version": self.python_version,
             "home_dir": self.home_dir,
+            "is_container": self.is_container,
+            "has_systemd": self.has_systemd,
             "available_tools": {
                 "git": self.has_git,
                 "node": self.has_node,
@@ -66,6 +72,8 @@ class LocalProbe:
             architecture=platform.machine(),
             python_version=platform.python_version(),
             home_dir=os.path.expanduser("~"),
+            is_container=self._detect_container(),
+            has_systemd=self._detect_systemd(),
             has_git=self._check_command("git", "--version"),
             has_node=self._check_command("node", "--version"),
             has_npm=self._check_command("npm", "--version"),
@@ -126,5 +134,48 @@ class LocalProbe:
                     timeout=5,
                 )
                 return result.returncode == 0
+        except Exception:
+            return False
+    
+    def _detect_container(self) -> bool:
+        """检测是否在容器中运行"""
+        if self.is_windows:
+            return False
+        
+        try:
+            # 方法 1: 检查 /.dockerenv 文件
+            if os.path.exists("/.dockerenv"):
+                return True
+            
+            # 方法 2: 检查 /proc/1/cgroup
+            if os.path.exists("/proc/1/cgroup"):
+                with open("/proc/1/cgroup") as f:
+                    content = f.read()
+                    if "docker" in content or "containerd" in content or "lxc" in content:
+                        return True
+            
+            # 方法 3: 检查 /proc/1/mountinfo
+            if os.path.exists("/proc/1/mountinfo"):
+                with open("/proc/1/mountinfo") as f:
+                    content = f.read()
+                    if "/docker/" in content:
+                        return True
+            
+            return False
+        except Exception:
+            return False
+    
+    def _detect_systemd(self) -> bool:
+        """检测是否使用 systemd"""
+        if self.is_windows:
+            return False
+        
+        try:
+            # 检查 PID 1 是否是 systemd
+            if os.path.exists("/proc/1/comm"):
+                with open("/proc/1/comm") as f:
+                    init = f.read().strip()
+                    return init == "systemd"
+            return False
         except Exception:
             return False

@@ -46,16 +46,35 @@ You are executing a specific deployment step. Focus ONLY on completing this step
 # Rules
 1. Focus ONLY on the current step's goal - do not think about other steps
 2. Use the success criteria to determine when the step is done
-3. If a command fails, analyze the error and try an alternative approach
+3. If a command fails, DIAGNOSE before retrying:
+   - Check logs: journalctl -u service, systemctl status, /var/log/*
+   - Verify prerequisites: file existence, permissions, process status
+   - Test connectivity: netstat, ss, curl, ping
+   - DON'T blindly retry the same command with minor variations
 4. Maximum {max_iterations} iterations for this step (current: {current_iteration})
 5. Declare step_done as soon as the success criteria is met
-6. For long-running commands (servers), use nohup or background execution
+6. If stuck after multiple failures, use ask_user to explain the situation
+7. For long-running commands (servers), use nohup or background execution
 
 # Shell Best Practices
 - Use `nohup ... &` for background processes
 - Use `sudo bash -c 'cat > file <<EOF ... EOF'` for writing files with sudo
 - Use `-y` flag for apt/yum to avoid interactive prompts
 - Check command success before proceeding
+
+# Diagnostic Commands for Common Issues
+When a service claims to start but doesn't work:
+- Check process: `ps aux | grep service_name`
+- Check socket: `ls -la /var/run/service.sock`
+- Check logs: `journalctl -u service -n 50` or `tail -50 /var/log/service.log`
+- Check listen ports: `ss -tulpn | grep port` or `netstat -tulpn | grep port`
+- Test daemon: `service_command info` or `service_command ps`
+
+For Docker specifically:
+- After starting daemon: Wait 2-3 seconds, then verify with `docker info`
+- If "Cannot connect to daemon": Check `ps aux | grep dockerd`
+- Check Docker socket permissions: `ls -la /var/run/docker.sock`
+- For non-systemd: Use `sudo service docker status` not `systemctl`
 
 # Output
 Respond with valid JSON only. No markdown, no explanation.

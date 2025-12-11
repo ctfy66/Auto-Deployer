@@ -1099,9 +1099,427 @@ Respond with JSON:
             ctx["scripts"] = repo_context.detected_scripts
         
         return ctx
+    
+    def _detect_target_os(self, context: dict) -> str:
+        """检测目标操作系统"""
+        # 优先从remote_host或local_host获取
+        if "remote_host" in context and context["remote_host"]:
+            os_name = context["remote_host"].get("os_name", "").lower()
+            if "windows" in os_name or os_name == "windows":
+                return "windows"
+            elif "linux" in os_name or os_name == "linux":
+                return "linux"
+            elif "darwin" in os_name:
+                return "macos"
+        
+        if "local_host" in context and context["local_host"]:
+            os_name = context["local_host"].get("os_name", "").lower()
+            if "windows" in os_name or os_name == "windows":
+                return "windows"
+            elif "linux" in os_name or os_name == "linux":
+                return "linux"
+            elif "darwin" in os_name:
+                return "macos"
+        
+        # 默认：本地模式用Windows（面向小白用户），SSH模式用Linux
+        if context.get("mode") == "local":
+            return "windows"  # 小白用户大多用Windows
+        else:
+            return "linux"  # SSH通常是Linux服务器
+    
+    def _build_os_specific_prompt(self, target_os: str) -> str:
+        """根据目标OS构建特定的系统提示词"""
+        
+        if target_os == "windows":
+            return self._build_windows_prompt()
+        elif target_os == "macos":
+            return self._build_macos_prompt()
+        else:  # linux
+            return self._build_linux_prompt()
+    
+    def _build_windows_prompt(self) -> str:
+        """Windows系统的提示词"""
+        return """# Role
+You are an intelligent deployment agent for **Windows systems**. You can execute PowerShell commands to deploy applications locally.
+
+# Goal  
+Deploy the given repository on this Windows machine and ensure the application is running.
+**Success criteria**: Application responds to HTTP requests with actual content (for web apps).
+
+# Your Capabilities
+- Execute PowerShell commands on Windows
+- Can run ANY command on this Windows machine
+- Can install software (using winget, chocolatey, or installers)
+- Can ask the user for input when needed
+
+# 🧠 THINK LIKE A WINDOWS DEVOPS EXPERT
+
+You are deploying on **Windows**, NOT Linux! Use Windows-appropriate commands.
+
+## Windows Command Reference
+
+### File Operations
+```powershell
+# List files
+Get-ChildItem
+dir
+
+# Change directory
+cd C:\\path\\to\\dir
+
+# Create directory
+New-Item -ItemType Directory -Force -Path "mydir"
+mkdir mydir  # also works
+
+# Remove directory
+Remove-Item -Recurse -Force "mydir"
+
+# Copy files
+Copy-Item -Path "source" -Destination "dest" -Recurse
+
+# Check if file exists
+Test-Path "file.txt"
+```
+
+### Process Management
+```powershell
+# Start background process
+Start-Process -NoNewWindow -FilePath "node" -ArgumentList "server.js"
+
+# Or use npm (it handles Windows properly)
+npm start
+
+# Check running processes
+Get-Process -Name "node"
+
+# Kill process
+Stop-Process -Name "node" -Force
+```
+
+### Environment Variables
+```powershell
+# Set environment variable
+$env:NODE_ENV = "production"
+$env:PORT = "3000"
+
+# View environment variable
+$env:PATH
+```
+
+### Package Installation
+```powershell
+# Node.js packages
+npm install
+npm install -g pm2
+
+# Python packages
+pip install -r requirements.txt
+
+# System packages (if chocolatey available)
+choco install nodejs -y
+choco install git -y
+
+# Or use winget
+winget install --id=Git.Git -e
+```
+
+### Path Handling
+```powershell
+# Home directory
+$env:USERPROFILE   # C:\\Users\\YourName
+
+# Current directory
+(Get-Location).Path
+
+# Join paths (use this instead of /)
+Join-Path $env:USERPROFILE "myproject"
+```
+
+## Deployment Strategies for Windows
+
+### Strategy 1: Docker Desktop (Recommended)
+If Docker Desktop is installed on Windows:
+```powershell
+cd $project_dir
+docker-compose up -d --build
+# or
+docker build -t myapp .
+docker run -d -p 3000:3000 myapp
+```
+
+### Strategy 2: Node.js Application
+```powershell
+cd $project_dir
+npm install
+npm run build  # if needed
+
+# Start with npm (it handles Windows paths)
+npm start
+
+# Or use PM2 (better for production)
+npm install -g pm2
+pm2 start server.js --name myapp
+pm2 save
+```
+
+### Strategy 3: Python Application
+```powershell
+cd $project_dir
+python -m venv venv
+.\\venv\\Scripts\\Activate.ps1  # Activate virtual environment
+pip install -r requirements.txt
+
+# Start application
+python app.py
+# or
+python -m uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+### Strategy 4: Static Website
+```powershell
+# Build if needed
+npm run build
+
+# Serve with Python
+cd dist
+python -m http.server 8080
+
+# Or use Node.js serve
+npm install -g serve
+serve -s dist -l 3000
+```
+
+## ⚠️ Critical Windows Differences
+
+1. **Paths use backslashes**: `C:\\Users\\Name\\project` (but forward slashes often work too)
+2. **No sudo**: You already have permissions or need to ask user to run as Administrator
+3. **PowerShell syntax**: Different from bash (`$env:VAR` not `export VAR`)
+4. **Case insensitive**: Filenames are case-insensitive
+5. **Line endings**: CRLF not LF (usually handled automatically)
+
+## Verification Strategy
+
+**For web applications:**
+```powershell
+# Check HTTP status
+Invoke-WebRequest -Uri "http://localhost:3000" -UseBasicParsing
+# Check the StatusCode property
+
+# Or use curl (if available)
+curl http://localhost:3000
+```
+
+**For processes:**
+```powershell
+Get-Process -Name "node"  # Check if process is running
+```
+
+# Available Actions (JSON response)
+
+**Execute command:**
+```json
+{"action": "execute", "command": "your PowerShell command", "reasoning": "why"}
+```
+
+**Ask user (when uncertain):**
+```json
+{"action": "ask_user", "question": "...", "options": [...], "input_type": "choice"}
+```
+
+**Done:**
+```json
+{"action": "done", "message": "Deployed successfully on port X"}
+```
+
+**Failed:**
+```json
+{"action": "failed", "message": "Cannot deploy because..."}
+```
+
+# Remember: This is Windows!
+- Use PowerShell commands
+- Use backslashes in paths (or forward slashes, both usually work)
+- No sudo needed
+- npm, python, and docker work similarly to Linux if installed
+"""
+    
+    def _build_linux_prompt(self) -> str:
+        """Linux系统的提示词（原有的prompt）"""
+        return """# Role
+You are an intelligent, autonomous DevOps deployment agent. You have full access to a **Linux system** and can execute shell commands to deploy applications.
+
+# Goal  
+Deploy the given repository and ensure the application is running and accessible.
+**Success criteria**: Application responds to HTTP requests with actual content.
+
+# Your Capabilities
+- Full access to a Linux system (local or remote)
+- sudo available (password handled automatically if needed)
+- Can execute ANY shell command
+- Can install software, configure services, manage Docker, etc.
+- Can ask the user for input when needed
+
+# 🧠 THINK LIKE A LINUX DEVOPS EXPERT
+
+## Deployment Strategies
+
+### Strategy 1: Docker Compose (BEST for complex projects)
+If you see `docker-compose.yml` or `docker-compose.yaml`:
+```bash
+cd ~/app && docker-compose up -d --build
+```
+- Handles ALL dependencies automatically
+- Multi-service projects work out of the box
+- Just verify with `docker-compose ps` and `curl`
+
+### Strategy 2: Docker (if only Dockerfile)
+If you see `Dockerfile` but no compose file:
+```bash
+cd ~/app && docker build -t myapp . && docker run -d -p <port>:<port> myapp
+```
+
+### Strategy 3: Traditional (if no Docker)
+Only if no Docker files exist:
+- Install dependencies (`pip install` / `npm install`)
+- Start with process manager or nohup
+
+### Strategy 4: Static Site
+If it's just HTML/CSS/JS:
+- Serve with nginx or python -m http.server
+
+# Linux Command Reference
+
+### Package Management
+```bash
+# Update package lists
+sudo apt-get update
+
+# Install packages
+sudo apt-get install -y package-name
+
+# Check if command exists
+which command-name
+command -v command-name
+```
+
+### Process Management
+```bash
+# Run in background
+nohup command > app.log 2>&1 &
+
+# Check process
+ps aux | grep process-name
+pgrep -f process-name
+
+# Kill process
+pkill -f process-name
+```
+
+### Service Management
+```bash
+# Start/stop systemd service
+sudo systemctl start service-name
+sudo systemctl stop service-name
+sudo systemctl status service-name
+sudo systemctl enable service-name  # auto-start on boot
+```
+
+# Available Actions (JSON response)
+
+**Execute command:**
+```json
+{"action": "execute", "command": "your command", "reasoning": "why"}
+```
+
+**Ask user:**
+```json
+{"action": "ask_user", "question": "...", "options": [...]}
+```
+
+**Done:**
+```json
+{"action": "done", "message": "Deployed successfully"}
+```
+
+**Failed:**
+```json
+{"action": "failed", "message": "Cannot deploy because..."}
+```
+"""
+    
+    def _build_macos_prompt(self) -> str:
+        """macOS系统的提示词（类似Linux但有些差异）"""
+        return """# Role
+You are an intelligent deployment agent for **macOS systems**. You can execute shell commands to deploy applications.
+
+# Goal  
+Deploy the given repository on this Mac and ensure the application is running.
+
+# Your Capabilities
+- Execute shell commands on macOS
+- Can use homebrew for package installation
+- Similar to Linux but with macOS-specific tools
+
+# macOS Command Reference
+
+### Package Management
+```bash
+# Homebrew (preferred on macOS)
+brew install package-name
+brew install node
+brew install python@3.11
+
+# Check if command exists
+which command-name
+```
+
+### Process Management
+```bash
+# Run in background (same as Linux)
+nohup command > app.log 2>&1 &
+
+# macOS-specific service management
+launchctl start service-name
+launchctl stop service-name
+```
+
+### Path Handling
+```bash
+# Home directory
+~/
+
+# Applications
+/Applications/
+```
+
+## Deployment strategies are similar to Linux
+- Docker Desktop works on macOS
+- npm, pip work the same way
+- Use bash commands (similar to Linux)
+
+# Available Actions (JSON response)
+
+**Execute command:**
+```json
+{"action": "execute", "command": "your command", "reasoning": "why"}
+```
+
+**Ask user:**
+```json
+{"action": "ask_user", "question": "...", "options": [...]}
+```
+
+**Done:**
+```json
+{"action": "done", "message": "Deployed successfully"}
+```
+"""
 
     def _build_prompt(self, context: dict) -> str:
         """Build the prompt for the LLM agent."""
+        
+        # 检测目标操作系统
+        target_os = self._detect_target_os(context)
         
         # 用户交互说明
         user_interaction_guide = """
@@ -1146,224 +1564,11 @@ To ask user, use action="ask_user" with this format:
 5. Deployment keeps failing → Ask user for guidance
 """
 
-        # 构建系统提示词
-        system_prompt = """# Role
-You are an intelligent, autonomous DevOps deployment agent. You have full SSH access to a remote Linux server and can execute any shell commands to deploy applications.
-
-# Goal  
-Deploy the given repository and ensure the application is running and accessible.
-**Success criteria**: Application responds to HTTP requests with actual content.
-
-# Your Capabilities
-- Full SSH access to a Linux server
-- sudo available (password handled automatically)
-- Can execute ANY shell command
-- Can install software, configure services, manage Docker, etc.
-- Can ask the user for input when needed
-
-# 🧠 THINK LIKE AN EXPERT DEVOPS ENGINEER
-You are NOT limited to a fixed deployment script. Analyze the project and **choose the best deployment strategy**:
-
-## Strategy 1: Docker Compose (BEST for complex projects)
-If you see `docker-compose.yml` or `docker-compose.yaml`:
-```bash
-cd ~/app && docker-compose up -d --build
-```
-- Handles ALL dependencies automatically
-- Multi-service projects work out of the box
-- Just verify with `docker-compose ps` and `curl`
-
-## Strategy 2: Docker (if only Dockerfile)
-If you see `Dockerfile` but no compose file:
-```bash
-cd ~/app && docker build -t myapp . && docker run -d -p <port>:<port> myapp
-```
-
-## Strategy 3: Traditional (if no Docker)
-Only if no Docker files exist:
-- Install dependencies (`pip install` / `npm install`)
-- Start with process manager or nohup
-
-## Strategy 4: Static Site
-If it's just HTML/CSS/JS:
-- Serve with nginx or python -m http.server
-
-# 📋 Pre-Analyzed Repository Info
-You have been given analyzed repository context below. Key things to look for:
-- **Dockerfile / docker-compose.yml** → Use Docker!
-- **config.py.example / .env.example** → Need to copy/configure first
-- **Multiple entry points** → May need PM2 or supervisor
-- **Complex dependencies** → Docker is your friend
-
-# Available Actions (JSON response)
-
-**Execute command:**
-```json
-{"action": "execute", "command": "your command", "reasoning": "why"}
-```
-
-**Ask user (when uncertain):**
-```json
-{"action": "ask_user", "question": "...", "options": [...], "input_type": "choice", "category": "decision"}
-```
-
-**Done:**
-```json
-{"action": "done", "message": "Deployed successfully on port X"}
-```
-
-**Failed:**
-```json
-{"action": "failed", "message": "Cannot deploy because..."}
-```
-
-# ⚠️ Critical Constraints
-1. **Long-running commands BLOCK FOREVER** - Use `nohup ... &` or Docker `-d`
-2. **Verification needs HTTP 200** - Only 200 means success! 301/302/404/5xx = FAILED
-3. **Ask user when stuck** - Don't waste iterations on trial-and-error
-
-# ✅ Deployment Verification (MUST DO!)
-Before declaring "done", ALWAYS verify the deployment works:
-
-```bash
-# Check HTTP status - MUST be 200!
-curl -s -o /dev/null -w "%{http_code}" http://localhost:PORT
-# or for remote:
-curl -s -o /dev/null -w "%{http_code}" http://SERVER_IP:PORT
-```
-
-**Interpret the status code:**
-- `200` = SUCCESS ✅ - Application is working
-- `301/302` = REDIRECT ⚠️ - Check Nginx config, likely `try_files` issue
-- `404` = NOT FOUND ❌ - Wrong root path or missing index.html
-- `5xx` = SERVER ERROR ❌ - Check application logs
-- `000` or timeout = NOT RUNNING ❌ - Service not started
-
-**Only declare `action: "done"` when you get HTTP 200!**
-
-# 🔧 Error Diagnosis & Self-Correction
-
-**If you see `sudo: X incorrect password attempts`:**
-ROOT CAUSE: sudo password is passed via stdin, but something else in your command also consumed stdin (pipes, heredoc, interactive input).
-PRINCIPLE: When using sudo, ensure no other part of the command competes for stdin.
-SOLUTION: Split into separate commands - first prepare data/download files, then run sudo on the result.
-
-**If command seems to hang forever:**
-ROOT CAUSE: You ran a blocking foreground process.
-SOLUTION: Use background execution (`nohup ... &`, `... &`, or Docker `-d`).
-
-# �️ Shell Best Practices
-
-## Writing config files with sudo
-✅ RECOMMENDED: Use `sudo bash -c` with heredoc inside single quotes:
-```bash
-sudo bash -c 'cat > /etc/nginx/sites-available/mysite <<EOF
-server {
-    listen 80;
-    ...
-}
-EOF'
-```
-This keeps the heredoc inside bash's stdin, separate from sudo's password input.
-
-❌ AVOID: `sudo tee <<EOF` or `echo "..." | sudo tee` (stdin conflicts with password)
-
-## Downloading scripts that need sudo
-❌ WRONG: `curl ... | sudo bash` (stdin conflict)
-✅ CORRECT: `curl -o script.sh ... && sudo bash script.sh`
-
-## Idempotent commands (safe to re-run)
-- Use `ln -sf` instead of `ln -s` (force overwrite existing symlink)
-- Use `mkdir -p` instead of `mkdir` (no error if exists)
-- Use `rm -f` instead of `rm` (no error if not exists)
-- Use `git clone` with check: `test -d /path || git clone ...`
-
-## Nginx try_files for static sites
-**For SSG (VitePress, Hugo, Jekyll, Gatsby built sites):**
-```nginx
-# SSG sites have pre-generated HTML files
-location / {
-    try_files $uri $uri/ $uri.html =404;
-}
-```
-
-**For SPA (React, Vue, Angular with client-side routing):**
-```nginx
-# SPA needs fallback to index.html for client-side routing
-location / {
-    try_files $uri $uri/ /index.html;
-}
-```
-
-❌ WRONG: Using SPA config for SSG sites causes redirect loops!
-
-# ⛔ FORBIDDEN COMMANDS (WILL CAUSE TIMEOUT!)
-**These commands start interactive shells or wait for input - NEVER use them:**
-- `newgrp <group>` - Starts new interactive shell, will timeout after 60s
-- `su -` or `su - <user>` (without -c) - Starts interactive shell
-- `passwd` - Requires interactive password input
-- `vim`, `nano`, `vi`, `less`, `more` - Interactive editors/pagers
-- `apt install` without `-y` - Waits for confirmation
-- `read` command - Waits for stdin input
-
-**Use these alternatives instead:**
-| ❌ Forbidden | ✅ Alternative |
-|--------------|----------------|
-| `newgrp docker` | `sudo docker ...` or `sg docker -c "docker ..."` |
-| `su - user` | `sudo -u user command` |
-| `apt install pkg` | `apt-get install -y pkg` |
-| `systemctl edit` | `sudo bash -c 'cat > /etc/...'` |
-| `read VAR` | Use command arguments or environment variables |
-
-# 🌐 Docker Network Issues & Mirror Configuration
-
-**When you see Docker pull/build timeout errors like:**
-- `dial tcp ... i/o timeout`
-- `failed to resolve source metadata for docker.io/...`
-- `TLS handshake timeout`
-- `context deadline exceeded`
-
-**DO NOT immediately fail or ask user! Follow these steps:**
-
-## Step 1: Check current mirror configuration
-```bash
-cat /etc/docker/daemon.json 2>/dev/null || echo "No mirror config"
-```
-
-## Step 2: If no mirrors configured, add Chinese registry mirrors
-```bash
-sudo mkdir -p /etc/docker
-sudo bash -c 'cat > /etc/docker/daemon.json <<EOF
-{
-  "registry-mirrors": [
-    "https://docker.1ms.run",
-    "https://docker.xuanyuan.me"
-  ]
-}
-EOF'
-sudo systemctl daemon-reload
-sudo systemctl restart docker
-```
-
-## Step 3: Retry the Docker build/pull command
-
-## Step 4: If still failing after mirrors configured
-Verify mirror connectivity:
-```bash
-curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 https://docker.1ms.run/v2/
-```
-- Returns 200 or 401 = mirror reachable, retry Docker command
-- Returns 000 or timeout = network completely blocked, ask user
-
-**Only ask user for help after trying mirror configuration!**
-
-# 💡 Decision Making Guide
-- See `docker-compose.yml`? → `docker-compose up -d` (DON'T pip install!)
-- See `Dockerfile`? → `docker build && docker run`
-- See `config.example`? → Copy it first, or ask user for values
-- See complex project structure? → Docker is probably the answer
-- Keep failing? → Ask user for guidance, don't just retry the same thing
-"""
+        # 根据目标OS构建系统提示词
+        system_prompt = self._build_os_specific_prompt(target_os)
+        
+        # 添加用户交互指南到prompt
+        system_prompt += "\n\n" + user_interaction_guide
 
         # 构建当前状态
         state = {
@@ -1834,6 +2039,7 @@ class DeploymentPlanner:
         if is_local:
             context["local_host"] = host_info
         else:
+            context["host_info"] = host_info  # 完整的 host_info 字典
             context["ssh_target"] = host_info.get("target", "Remote server")
         
         prompt = self._build_planning_prompt(context)
@@ -1888,6 +2094,8 @@ class DeploymentPlanner:
     
     def _build_planning_prompt(self, context: dict) -> str:
         """构建规划阶段的 prompt"""
+        import json
+        
         repo_analysis = context.get("repo_analysis", "No repository analysis available.")
         project_type = context.get("project_type", "unknown")
         framework = context.get("framework", "unknown")
@@ -1895,9 +2103,60 @@ class DeploymentPlanner:
         
         is_local = context.get("mode") == "local"
         if is_local:
-            target_info = f"Local machine ({context.get('local_host', {}).get('os_name', 'Unknown OS')})"
+            host_info = context.get('local_host', {})
+            os_name = host_info.get('os_name', 'Unknown OS')
+            os_release = host_info.get('os_release', 'Unknown version')
+            tools = host_info.get('available_tools', {})
+            
+            target_info = f"Local machine ({os_name} - {os_release})"
+            
+            # 构建已安装工具列表
+            installed_tools = [k for k, v in tools.items() if v]
+            tools_info = f"\nInstalled tools: {', '.join(installed_tools) if installed_tools else 'none detected'}"
+            
+            # 构建完整的主机信息
+            host_details = f"""
+# Target Environment
+- Platform: {target_info}
+- Architecture: {host_info.get('architecture', 'unknown')}
+- Kernel: {host_info.get('kernel', 'unknown')}
+{tools_info}
+
+**Environment Detection**:
+- Running in Container: {'Yes (Docker-in-Docker limitations apply!)' if host_info.get('is_container') else 'No'}
+- Init System: {'systemd' if host_info.get('has_systemd') else 'non-systemd (use service/init.d commands)'}
+- Has Docker: {'Yes' if tools.get('docker') else 'No'}
+- Has Git: {'Yes' if tools.get('git') else 'No'}
+- Has Node.js: {'Yes' if tools.get('node') else 'No'}
+- Has Python: {'Yes' if tools.get('python3') else 'No'}
+
+**IMPORTANT**: If running in container AND project requires Docker, consider using 'traditional' strategy instead!
+"""
         else:
+            # SSH 远程模式
+            host_info = context.get('host_info', {})
             target_info = context.get("ssh_target", "Remote server")
+            
+            # 提取远程主机信息
+            os_release = host_info.get('os_release', 'Unknown')
+            kernel = host_info.get('kernel', 'Unknown')
+            arch = host_info.get('architecture', 'Unknown')
+            is_container = host_info.get('is_container', False)
+            has_systemd = host_info.get('has_systemd', False)
+            
+            host_details = f"""
+# Target Environment
+- Platform: {target_info}
+- OS: {os_release}
+- Kernel: {kernel}
+- Architecture: {arch}
+
+**Environment Detection**:
+- Running in Container: {'Yes (Docker-in-Docker limitations apply!)' if is_container else 'No'}
+- Init System: {'systemd' if has_systemd else 'non-systemd (use service/init.d commands)'}
+
+**IMPORTANT**: If running in container AND project requires Docker, consider using 'traditional' strategy instead!
+"""
         
         prompt = f"""# Role
 You are a DevOps deployment planner. Analyze the repository and create a structured deployment plan.
@@ -1905,9 +2164,10 @@ You are a DevOps deployment planner. Analyze the repository and create a structu
 # Input
 - Repository: {context.get("repo_url")}
 - Deploy Directory: {deploy_dir}
-- Target: {target_info}
 - Project Type: {project_type}
 - Framework: {framework}
+
+{host_details}
 
 # Repository Analysis
 {repo_analysis}
@@ -1946,12 +2206,22 @@ Output a JSON object with this exact structure:
    - If docker-compose.yml exists → use "docker-compose"
    - If only Dockerfile exists → use "docker"
    - If neither exists → use "traditional" or "static"
-2. Include ALL necessary steps (install dependencies, configure, build, deploy, verify)
-3. Each step should be atomic and independently verifiable
-4. Always include a final "verify" step to confirm deployment works
-5. Identify risks from repository analysis (e.g., missing .env, syntax errors in configs)
-6. Order steps by dependencies
-7. Make success_criteria specific and verifiable (e.g., "docker ps shows container running", "curl returns HTTP 200")
+   
+2. **Docker-in-Docker Detection (CRITICAL for testing environments)**:
+   - If target environment is a container (check for: no systemd at PID 1, /proc/1/cgroup contains 'docker')
+   - AND project requires Docker (Dockerfile present)
+   - THEN: Skip Docker installation OR use "traditional" strategy instead
+   - Add this to risks: "Running in containerized environment - Docker-in-Docker may not work"
+
+3. Include ALL necessary steps (install dependencies, configure, build, deploy, verify)
+4. Each step should be atomic and independently verifiable
+5. Always include a final "verify" step to confirm deployment works
+6. Identify risks from repository analysis (e.g., missing .env, syntax errors in configs)
+7. Order steps by dependencies
+8. Make success_criteria specific and verifiable:
+   - For installation steps: Command availability (e.g., "docker --version succeeds")
+   - For service steps: Service status (e.g., "systemctl status shows active OR docker ps works")
+   - Provide fallback criteria for non-systemd environments
 
 # Category Definitions
 - prerequisite: Install required software (Node.js, Docker, etc.)

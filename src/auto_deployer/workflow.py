@@ -258,7 +258,10 @@ class DeploymentWorkflow:
         # 5. 使用 Orchestrator 执行
         logger.info("🚀 Phase 2: Executing deployment plan...")
         
-        max_per_step = max(5, self.config.agent.max_iterations // max(len(plan.steps), 1))
+        # 优先使用配置中的 max_iterations_per_step，否则使用自动分配
+        max_per_step = getattr(self.config.agent, 'max_iterations_per_step', None)
+        if max_per_step is None:
+            max_per_step = max(10, self.config.agent.max_iterations // max(len(plan.steps), 1))
         
         orchestrator = DeploymentOrchestrator(
             llm_config=self.config.llm,
@@ -352,10 +355,17 @@ class DeploymentWorkflow:
         repo_name = _get_repo_name(request.repo_url)
         deploy_dir = request.deploy_dir or f"~/{repo_name}"
         
+        # 构建主机信息字典
+        if host_facts:
+            host_info = host_facts.to_payload()
+            host_info["target"] = f"{request.username}@{request.host}"
+        else:
+            host_info = {"target": f"{request.username}@{request.host}"}
+        
         deploy_ctx = DeployContext(
             repo_url=request.repo_url,
             deploy_dir=deploy_dir,
-            host_info=host_facts.to_payload() if host_facts else {"target": f"{request.username}@{request.host}"},
+            host_info=host_info,
             repo_analysis=repo_context.to_prompt_context() if repo_context else None,
             project_type=repo_context.project_type if repo_context else None,
             framework=repo_context.detected_framework if repo_context else None,
@@ -395,8 +405,10 @@ class DeploymentWorkflow:
         # 5. 使用 Orchestrator 执行
         logger.info("🚀 Phase 2: Executing deployment plan...")
         
-        # 计算每个步骤的最大迭代次数
-        max_per_step = max(5, self.config.agent.max_iterations // max(len(plan.steps), 1))
+        # 优先使用配置中的 max_iterations_per_step，否则使用自动分配
+        max_per_step = getattr(self.config.agent, 'max_iterations_per_step', None)
+        if max_per_step is None:
+            max_per_step = max(10, self.config.agent.max_iterations // max(len(plan.steps), 1))
         
         orchestrator = DeploymentOrchestrator(
             llm_config=self.config.llm,

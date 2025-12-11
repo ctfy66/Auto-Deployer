@@ -1,0 +1,25 @@
+{
+  "test_environment": {
+    "base_image": "ubuntu:22.04",
+    "container_name": "autodep-test-env",
+    "ssh_password": "testpass",
+    "ssh_timeout": 30,
+    "apt_mirror": "http://mirrors.aliyun.com"
+  },
+  "deployment": {
+    "default_timeout_minutes": 30,
+    "max_iterations": 30,
+    "cleanup_after_each": false
+  },
+  "verification": {
+    "default_timeout": 10,
+    "retry_count": 3,
+    "retry_delay": 2
+  },
+  "reporting": {
+    "generate_json": true,
+    "generate_markdown": true,
+    "save_logs": true
+  }
+}
+

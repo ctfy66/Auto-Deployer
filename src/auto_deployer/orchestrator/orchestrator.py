@@ -234,6 +234,7 @@ class DeploymentOrchestrator:
             "deploy_dir": deploy_ctx.deploy_dir,
             "project_type": deploy_ctx.project_type,
             "framework": deploy_ctx.framework,
+            "host_info": deploy_ctx.host_info,  # 保存主机信息
             "start_time": datetime.now().isoformat(),
             "end_time": None,
             "status": "running",

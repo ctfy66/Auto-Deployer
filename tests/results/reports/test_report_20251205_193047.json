@@ -1,0 +1,83 @@
+{
+  "timestamp": "2025-12-05T19:30:47.037439",
+  "config": {
+    "model": "gemini-2.5-flash",
+    "temperature": 0.0,
+    "max_iterations": 40
+  },
+  "summary": {
+    "total_projects": 2,
+    "successful": 0,
+    "failed": 2,
+    "success_rate": 0.0,
+    "by_difficulty": {
+      "easy": {
+        "total": 2,
+        "success": 0,
+        "success_rate": 0.0
+      }
+    },
+    "average_metrics": {
+      "deployment_time_seconds": 0.0,
+      "iterations": 0.0,
+      "commands": 0.0,
+      "llm_calls": 0.0,
+      "user_interactions": 0.0,
+      "error_recoveries": 0.0
+    },
+    "strategy_accuracy": 50.0,
+    "verification_rate": 0.0
+  },
+  "results": [
+    {
+      "project_name": "docker-welcome",
+      "project_difficulty": "easy",
+      "success": false,
+      "final_status": "failed",
+      "deployment_time_seconds": 927.022185087204,
+      "total_iterations": 5,
+      "total_commands": 5,
+      "llm_call_count": 5,
+      "user_interactions": 0,
+      "error_recovery_count": 0,
+      "strategy_used": "docker",
+      "expected_strategy": "docker",
+      "strategy_correct": true,
+      "verification_passed": false,
+      "verification_details": [
+        {
+          "url": "http://localhost:8080",
+          "error": "Connection refused",
+          "passed": false
+        }
+      ],
+      "log_file": "agent_logs\\deploy_welcome-to-docker_20251205_191419.json",
+      "error": null
+    },
+    {
+      "project_name": "static-html-sample",
+      "project_difficulty": "easy",
+      "success": false,
+      "final_status": "success",
+      "deployment_time_seconds": 67.57946419715881,
+      "total_iterations": 4,
+      "total_commands": 4,
+      "llm_call_count": 4,
+      "user_interactions": 0,
+      "error_recovery_count": 0,
+      "strategy_used": "traditional",
+      "expected_strategy": "static",
+      "strategy_correct": false,
+      "verification_passed": false,
+      "verification_details": [
+        {
+          "url": "http://localhost:80",
+          "error": "Connection refused",
+          "passed": false
+        }
+      ],
+      "log_file": "agent_logs\\deploy_Hello-World_20251205_192948.json",
+      "error": null
+    }
+  ]
+}
