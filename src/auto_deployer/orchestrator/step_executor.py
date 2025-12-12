@@ -5,16 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import platform
-import time
 from typing import Optional, Union, TYPE_CHECKING
-
-import requests
 
 from .models import (
     StepContext, StepResult, StepAction, ActionType,
     CommandRecord, StepStatus, DeployContext
 )
-from .prompts import STEP_EXECUTION_PROMPT, STEP_EXECUTION_PROMPT_WINDOWS
+from ..prompts import STEP_EXECUTION_PROMPT, STEP_EXECUTION_PROMPT_WINDOWS
 from ..llm.output_extractor import CommandOutputExtractor
 
 if TYPE_CHECKING:
@@ -49,29 +46,16 @@ class StepExecutor:
         self.max_iterations = max_iterations_per_step
         self.is_windows = is_windows
         
-        # HTTP session for LLM calls
-        self.http_session = requests.Session()
-        self._setup_proxy()
-        
-        # LLM endpoint
-        self.base_endpoint = llm_config.endpoint or (
-            f"https://generativelanguage.googleapis.com/v1beta/models/{llm_config.model}:generateContent"
-        )
+        # Initialize LLM provider using factory
+        from ..llm.base import create_llm_provider
+        self.llm_provider = create_llm_provider(llm_config)
+        logger.info("StepExecutor using LLM provider: %s (model: %s)", llm_config.provider, llm_config.model)
 
         # 输出提取器
         self.output_extractor = CommandOutputExtractor(
             max_success_lines=30,
             max_error_lines=50
         )
-    
-    def _setup_proxy(self) -> None:
-        """设置代理"""
-        import os
-        proxy = self.llm_config.proxy or os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
-        if proxy:
-            self.http_session.proxies = {"http": proxy, "https": proxy}
-            logger.debug("StepExecutor using proxy: %s", proxy)
-    
     def execute(
         self,
         step_ctx: StepContext,
@@ -187,53 +171,24 @@ class StepExecutor:
         return self._parse_action(response_text)
     
     def _call_llm(self, prompt: str) -> str:
-        """调用 LLM API"""
-        url = f"{self.base_endpoint}?key={self.llm_config.api_key}"
-        body = {
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": self.llm_config.temperature,
-                "responseMimeType": "application/json",
-            },
-        }
-        
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = self.http_session.post(url, json=body, timeout=60)
-                
-                if response.status_code == 429:
-                    wait_time = 30 * (attempt + 1)
-                    logger.warning(f"Rate limited. Waiting {wait_time}s...")
-                    time.sleep(wait_time)
-                    continue
-                
-                response.raise_for_status()
-                data = response.json()
-                
-                candidates = data.get("candidates", [])
-                for candidate in candidates:
-                    parts = candidate.get("content", {}).get("parts", [])
-                    for part in parts:
-                        if text := part.get("text"):
-                            return text
-                
+        """调用 LLM API（通过 provider 抽象层）"""
+        try:
+            response_text = self.llm_provider.generate_response(
+                prompt=prompt,
+                response_format="json",
+                timeout=60,
+                max_retries=3
+            )
+            
+            if not response_text:
+                logger.error("No response from LLM provider")
                 return '{"action": "step_failed", "message": "No LLM response"}'
-                
-            except requests.exceptions.HTTPError as e:
-                if response.status_code == 429 and attempt < max_retries - 1:
-                    wait_time = 30 * (attempt + 1)
-                    logger.warning(f"Rate limited. Waiting {wait_time}s...")
-                    time.sleep(wait_time)
-                    continue
-                logger.error(f"LLM API call failed: {e}")
-                return f'{{"action": "step_failed", "message": "LLM error: {str(e)}"}}'
-            except Exception as e:
-                logger.error(f"LLM call failed: {e}")
-                if attempt == max_retries - 1:
-                    return f'{{"action": "step_failed", "message": "LLM error: {str(e)}"}}'
-        
-        return '{"action": "step_failed", "message": "Rate limited after max retries"}'
+            
+            return response_text
+            
+        except Exception as e:
+            logger.error(f"LLM provider call failed: {e}")
+            return f'{{"action": "step_failed", "message": "LLM error: {str(e)}"}}'
     
     def _parse_action(self, text: str) -> StepAction:
         """解析 LLM 响应为 StepAction"""
@@ -266,7 +221,7 @@ class StepExecutor:
     def _execute_command(self, command: str) -> CommandRecord:
         """执行命令并智能提取输出"""
         try:
-            result = self.session.run(command, timeout=120)
+            result = self.session.run(command, timeout=600, idle_timeout=60)
 
             # 使用智能提取器处理输出
             extracted = self.output_extractor.extract(
@@ -277,13 +232,29 @@ class StepExecutor:
                 command=command
             )
 
+            # 格式化为LLM可读的输出
+            formatted_output = self.output_extractor.format_for_llm(extracted)
+
+            # 打印到终端 - 显示提取后的输出
+            print("\n" + "=" * 60)
+            print("📤 LLM将看到的提取后输出:")
+            print("-" * 60)
+            print(formatted_output)
+            print("=" * 60 + "\n")
+
+            # 记录到日志
+            logger.info(f"Extracted output for LLM (original: {extracted.full_length} chars, extracted: {extracted.extracted_length} chars):")
+            logger.info(f"Summary: {extracted.summary}")
+            if extracted.key_info:
+                logger.debug(f"Key info: {extracted.key_info[:5]}")  # 只记录前5条
+
             # 返回包含提取后输出的CommandRecord
             return CommandRecord(
                 command=command,
                 success=result.ok,
                 exit_code=result.exit_status,
                 # 使用提取后的输出替代原始截断输出
-                stdout=self.output_extractor.format_for_llm(extracted),
+                stdout=formatted_output,
                 stderr="",  # 错误已整合到stdout的格式化输出中
                 timestamp=extracted.summary if hasattr(extracted, 'summary') else ""
             )

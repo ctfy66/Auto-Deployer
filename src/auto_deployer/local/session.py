@@ -62,6 +62,7 @@ class LocalSession:
         command: str, 
         *, 
         timeout: Optional[int] = None,
+        idle_timeout: int = 60,
         stream_output: bool = True,
     ) -> LocalCommandResult:
         """
@@ -69,17 +70,26 @@ class LocalSession:
         
         Args:
             command: The command to execute
-            timeout: Timeout in seconds (None for no timeout)
+            timeout: Total timeout in seconds (default: 600 for stream mode)
+            idle_timeout: Timeout for no output activity (default: 60 seconds)
             stream_output: Whether to stream output in real-time
             
         Returns:
             LocalCommandResult with stdout, stderr, and exit status
+            
+        Note:
+            The idle_timeout helps detect commands that are waiting for input
+            which would otherwise block forever.
         """
+        # 设置默认总超时
+        if timeout is None:
+            timeout = 600  # 默认10分钟总超时
+        
         # 转换命令格式（如果需要）
         actual_command = self._adapt_command(command)
         
         if stream_output:
-            return self._run_streaming(actual_command, timeout)
+            return self._run_streaming(actual_command, timeout, idle_timeout)
         else:
             return self._run_blocking(actual_command, timeout)
 
@@ -166,8 +176,12 @@ class LocalSession:
                 exit_status=-1,
             )
 
-    def _run_streaming(self, command: str, timeout: Optional[int]) -> LocalCommandResult:
-        """Run command with real-time output streaming."""
+    def _run_streaming(self, command: str, timeout: int, idle_timeout: int) -> LocalCommandResult:
+        """Run command with real-time output streaming and dual timeout mechanism."""
+        import time
+        import selectors
+        import threading
+        
         try:
             # 选择 shell
             if self.is_windows:
@@ -194,31 +208,86 @@ class LocalSession:
             stdout_chunks = []
             stderr_chunks = []
             
-            import selectors
-            import threading
+            # 时间追踪
+            start_time = time.time()
+            last_activity_time = time.time()
             
             # Windows 不支持 selectors 用于 pipes，使用线程
             if self.is_windows:
+                # 标志位：用于线程通信
+                output_lock = threading.Lock()
+                has_new_output = [False]  # 使用列表来允许在闭包中修改
+                
                 def read_stdout():
-                    for line in process.stdout:
-                        stdout_chunks.append(line)
-                        sys.stdout.write(line)
-                        sys.stdout.flush()
+                    try:
+                        for line in process.stdout:
+                            with output_lock:
+                                stdout_chunks.append(line)
+                                has_new_output[0] = True
+                            sys.stdout.write(line)
+                            sys.stdout.flush()
+                    except:
+                        pass
                 
                 def read_stderr():
-                    for line in process.stderr:
-                        stderr_chunks.append(line)
-                        sys.stderr.write(line)
-                        sys.stderr.flush()
+                    try:
+                        for line in process.stderr:
+                            with output_lock:
+                                stderr_chunks.append(line)
+                                has_new_output[0] = True
+                            sys.stderr.write(line)
+                            sys.stderr.flush()
+                    except:
+                        pass
                 
-                t1 = threading.Thread(target=read_stdout)
-                t2 = threading.Thread(target=read_stderr)
+                t1 = threading.Thread(target=read_stdout, daemon=True)
+                t2 = threading.Thread(target=read_stderr, daemon=True)
                 t1.start()
                 t2.start()
                 
-                process.wait(timeout=timeout)
-                t1.join(timeout=1)
-                t2.join(timeout=1)
+                # 循环检查进程状态和超时
+                while process.poll() is None:
+                    # 检查是否有新输出
+                    with output_lock:
+                        if has_new_output[0]:
+                            last_activity_time = time.time()
+                            has_new_output[0] = False
+                    
+                    # 检查空闲超时
+                    idle_time = time.time() - last_activity_time
+                    if idle_time > idle_timeout:
+                        process.kill()
+                        t1.join(timeout=1)
+                        t2.join(timeout=1)
+                        return LocalCommandResult(
+                            command=command,
+                            stdout="".join(stdout_chunks).strip(),
+                            stderr=f"IDLE_TIMEOUT: No output for {idle_timeout} seconds. "
+                                   f"Command may be waiting for input (like interactive prompts). "
+                                   f"Use non-interactive alternatives instead.",
+                            exit_status=-1,
+                        )
+                    
+                    # 检查总超时
+                    total_time = time.time() - start_time
+                    if total_time > timeout:
+                        process.kill()
+                        t1.join(timeout=1)
+                        t2.join(timeout=1)
+                        return LocalCommandResult(
+                            command=command,
+                            stdout="".join(stdout_chunks).strip(),
+                            stderr=f"TOTAL_TIMEOUT: Command exceeded {timeout} seconds total execution time.",
+                            exit_status=-2,
+                        )
+                    
+                    # 短暂休眠避免 CPU 占用过高
+                    time.sleep(0.1)
+                
+                # 等待线程完成读取剩余输出
+                t1.join(timeout=2)
+                t2.join(timeout=2)
+                
             else:
                 # Unix: 使用 selectors
                 sel = selectors.DefaultSelector()
@@ -226,6 +295,9 @@ class LocalSession:
                 sel.register(process.stderr, selectors.EVENT_READ)
                 
                 while process.poll() is None:
+                    has_activity = False
+                    
+                    # 使用 select 读取可用输出
                     for key, _ in sel.select(timeout=0.1):
                         line = key.fileobj.readline()
                         if line:
@@ -237,6 +309,37 @@ class LocalSession:
                                 stderr_chunks.append(line)
                                 sys.stderr.write(line)
                                 sys.stderr.flush()
+                            has_activity = True
+                    
+                    # 如果有输出活动，重置空闲计时器
+                    if has_activity:
+                        last_activity_time = time.time()
+                    
+                    # 检查空闲超时
+                    idle_time = time.time() - last_activity_time
+                    if idle_time > idle_timeout:
+                        process.kill()
+                        sel.close()
+                        return LocalCommandResult(
+                            command=command,
+                            stdout="".join(stdout_chunks).strip(),
+                            stderr=f"IDLE_TIMEOUT: No output for {idle_timeout} seconds. "
+                                   f"Command may be waiting for input (like interactive prompts). "
+                                   f"Use non-interactive alternatives instead.",
+                            exit_status=-1,
+                        )
+                    
+                    # 检查总超时
+                    total_time = time.time() - start_time
+                    if total_time > timeout:
+                        process.kill()
+                        sel.close()
+                        return LocalCommandResult(
+                            command=command,
+                            stdout="".join(stdout_chunks).strip(),
+                            stderr=f"TOTAL_TIMEOUT: Command exceeded {timeout} seconds total execution time.",
+                            exit_status=-2,
+                        )
                 
                 # 读取剩余输出
                 for line in process.stdout:
@@ -257,15 +360,12 @@ class LocalSession:
                 exit_status=process.returncode or 0,
             )
             
-        except subprocess.TimeoutExpired:
-            process.kill()
-            return LocalCommandResult(
-                command=command,
-                stdout="",
-                stderr=f"Command timed out after {timeout} seconds",
-                exit_status=-1,
-            )
         except Exception as e:
+            # 确保进程被终止
+            try:
+                process.kill()
+            except:
+                pass
             return LocalCommandResult(
                 command=command,
                 stdout="",

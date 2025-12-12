@@ -3,7 +3,7 @@
     "provider": "deepseek",
     "model": "deepseek-chat",
     "api_key": null,
-    "endpoint": null,
+    "endpoint": "https://api.deepseek.com/v1",
     "temperature": 0.0,
     "proxy": null
   },

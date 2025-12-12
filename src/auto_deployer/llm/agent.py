@@ -765,7 +765,7 @@ class DeploymentAgent:
     def _execute_local_command(self, session: "LocalSession", command: str) -> CommandResult:
         """Execute a command locally."""
         try:
-            result = session.run(command, timeout=300)  # 本地命令给更长超时
+            result = session.run(command, timeout=600, idle_timeout=120)  # 本地命令给更长超时
             return CommandResult(
                 command=command,
                 success=result.ok,
@@ -1008,7 +1008,7 @@ Respond with JSON:
     def _execute_command(self, session: "SSHSession", command: str) -> CommandResult:
         """Execute a command on the remote server."""
         try:
-            result = session.run(command, timeout=120)
+            result = session.run(command, timeout=600, idle_timeout=60)
             return CommandResult(
                 command=command,
                 success=result.ok,
@@ -1196,33 +1196,64 @@ docker build -t myapp .
 docker run -d -p 3000:3000 myapp
 ```
 
-### Strategy 2: Node.js Application
+### Strategy 2: Node.js Application (MANDATORY: Use Local Dependencies)
 ```powershell
 cd $project_dir
-npm install
-npm run build  # if needed
 
-# Start with npm (it handles Windows paths)
+# STEP 1: Install dependencies locally (NEVER use -g)
+npm install
+
+# STEP 2: Build if needed
+npm run build
+
+# STEP 3: Start application
+# Option A: Use npm scripts (recommended)
 npm start
 
-# Or use PM2 (better for production)
-npm install -g pm2
-pm2 start server.js --name myapp
-pm2 save
+# Option B: Use local PM2 via npx (better for production)
+npm install pm2  # Install locally, NOT globally
+npx pm2 start server.js --name myapp
+npx pm2 save
+npx pm2 list  # Verify it's running
+
+# Option C: Direct node execution
+node server.js
 ```
 
-### Strategy 3: Python Application
+**Why local dependencies are mandatory:**
+- ❌ `npm install -g pm2` → Global install → version conflicts across projects
+- ✅ `npm install pm2` + `npx pm2` → Local install → isolated per project
+
+### Strategy 3: Python Application (MANDATORY: Use Virtual Environment)
 ```powershell
 cd $project_dir
+
+# STEP 1: Create virtual environment (MANDATORY)
 python -m venv venv
-.\\venv\\Scripts\\Activate.ps1  # Activate virtual environment
+
+# STEP 2: Activate virtual environment (MANDATORY)
+.\venv\Scripts\Activate.ps1
+# If execution policy error, run:
+# Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+# STEP 3: Verify activation (should see venv path)
+Get-Command python | Select-Object Source
+
+# STEP 4: Install dependencies in isolated environment
 pip install -r requirements.txt
 
-# Start application
+# STEP 5: Run application with venv Python
 python app.py
-# or
+# or for FastAPI/ASGI apps:
 python -m uvicorn main:app --host 0.0.0.0 --port 8000
+
+# For background process:
+Start-Process -NoNewWindow -FilePath ".\venv\Scripts\python.exe" -ArgumentList "app.py"
 ```
+
+**Why virtual environment is mandatory:**
+- ❌ Without venv: Dependencies install to system Python → version conflicts
+- ✅ With venv: Dependencies isolated → safe and reproducible
 
 ### Strategy 4: Static Website
 ```powershell
@@ -1327,14 +1358,68 @@ If you see `Dockerfile` but no compose file:
 cd ~/app && docker build -t myapp . && docker run -d -p <port>:<port> myapp
 ```
 
-### Strategy 3: Traditional (if no Docker)
-Only if no Docker files exist:
-- Install dependencies (`pip install` / `npm install`)
-- Start with process manager or nohup
+### Strategy 3: Traditional (if no Docker) - MANDATORY: Use Environment Isolation
+
+**Python Projects:**
+```bash
+cd ~/app
+
+# STEP 1: Create virtual environment (MANDATORY)
+python3 -m venv venv
+
+# STEP 2: Activate virtual environment (MANDATORY)
+source venv/bin/activate
+
+# STEP 3: Verify activation
+which python  # Should show ~/app/venv/bin/python
+
+# STEP 4: Install dependencies in isolated environment
+pip install -r requirements.txt
+
+# STEP 5: Run with venv Python
+python app.py
+# or for background:
+nohup ./venv/bin/python app.py > app.log 2>&1 &
+```
+
+**Node.js Projects:**
+```bash
+cd ~/app
+
+# STEP 1: Install dependencies locally (NEVER use -g)
+npm install
+
+# STEP 2: Build if needed
+npm run build
+
+# STEP 3: Start application
+# Option A: Use npm scripts
+npm start
+# Option B: Use local PM2
+npm install pm2  # Local, NOT global
+npx pm2 start server.js --name myapp
+# Option C: Background with nohup
+nohup node server.js > app.log 2>&1 &
+```
+
+**Why environment isolation is mandatory:**
+- ❌ `pip install flask` → System Python → conflicts with other projects
+- ✅ `source venv/bin/activate && pip install flask` → Isolated → safe
+- ❌ `npm install -g pm2` → Global → version conflicts
+- ✅ `npm install pm2 && npx pm2` → Local → per-project isolation
 
 ### Strategy 4: Static Site
 If it's just HTML/CSS/JS:
-- Serve with nginx or python -m http.server
+```bash
+# Build if needed
+npm run build
+
+# Serve with Python (in venv if possible)
+cd dist && python3 -m http.server 8080
+
+# Or use npx serve (local)
+npx serve -s dist -l 3000
+```
 
 # Linux Command Reference
 
@@ -1441,10 +1526,58 @@ launchctl stop service-name
 /Applications/
 ```
 
-## Deployment strategies are similar to Linux
-- Docker Desktop works on macOS
-- npm, pip work the same way
-- Use bash commands (similar to Linux)
+## Deployment Strategies (MANDATORY: Use Environment Isolation)
+
+### Strategy 1: Docker Desktop (Recommended)
+```bash
+cd ~/app
+docker-compose up -d --build
+# or
+docker build -t myapp . && docker run -d -p 3000:3000 myapp
+```
+
+### Strategy 2: Python Projects - MANDATORY Virtual Environment
+```bash
+cd ~/app
+
+# STEP 1: Create virtual environment (MANDATORY)
+python3 -m venv venv
+
+# STEP 2: Activate (MANDATORY)
+source venv/bin/activate
+
+# STEP 3: Verify activation
+which python  # Should show ~/app/venv/bin/python
+
+# STEP 4: Install dependencies
+pip install -r requirements.txt
+
+# STEP 5: Run application
+python app.py
+# or background:
+nohup ./venv/bin/python app.py > app.log 2>&1 &
+```
+
+### Strategy 3: Node.js Projects - MANDATORY Local Dependencies
+```bash
+cd ~/app
+
+# STEP 1: Install locally (NEVER use -g)
+npm install
+
+# STEP 2: Build if needed
+npm run build
+
+# STEP 3: Start
+npm start
+# or with local PM2:
+npm install pm2
+npx pm2 start server.js
+```
+
+**Why environment isolation is mandatory:**
+- ❌ System-wide installs → version conflicts between projects
+- ✅ Virtual environments → isolated, reproducible, safe
 
 # Available Actions (JSON response)
 
@@ -1693,6 +1826,20 @@ Output a JSON object with this exact structure:
 4. Always include a final "verify" step to confirm deployment works
 5. Identify risks from repository analysis (e.g., missing .env, syntax errors in configs)
 6. Order steps by dependencies
+
+# 🔒 CRITICAL: Environment Isolation (MANDATORY)
+7. For "traditional" strategy, you MUST include environment isolation steps:
+   - **Python projects**: MUST create and activate virtual environment BEFORE pip install
+     Example step: "Create Python virtual environment (venv)"
+   - **Node.js projects**: MUST use local dependencies (npm install, NOT npm install -g)
+     Example step: "Install Node.js dependencies locally"
+   - **Docker projects**: Already isolated, no additional steps needed
+8. The environment isolation step should be in "setup" category and come BEFORE dependency installation
+9. Example steps for Python project:
+   - Step 1 (setup): "Create virtual environment" → python -m venv venv
+   - Step 2 (setup): "Activate virtual environment and install dependencies" → source venv/bin/activate && pip install -r requirements.txt
+10. Example steps for Node.js project:
+   - Step 1 (setup): "Install local dependencies" → npm install (NEVER use -g)
 
 # Category Definitions
 - prerequisite: Install required software (Node.js, Docker, etc.)
@@ -2155,6 +2302,20 @@ Output a JSON object with this exact structure:
    - For installation steps: Command availability (e.g., "docker --version succeeds")
    - For service steps: Service status (e.g., "systemctl status shows active OR docker ps works")
    - Provide fallback criteria for non-systemd environments
+
+# 🔒 CRITICAL: Environment Isolation (MANDATORY)
+9. For "traditional" strategy, you MUST include environment isolation steps:
+   - **Python projects**: MUST create and activate virtual environment BEFORE pip install
+     Example step: "Create Python virtual environment (venv)"
+   - **Node.js projects**: MUST use local dependencies (npm install, NOT npm install -g)
+     Example step: "Install Node.js dependencies locally"
+   - **Docker projects**: Already isolated, no additional steps needed
+10. The environment isolation step should be in "setup" category and come BEFORE dependency installation
+11. Example steps for Python project:
+   - Step X (setup): "Create virtual environment" → python -m venv venv
+   - Step X+1 (setup): "Activate virtual environment and install dependencies" → source venv/bin/activate && pip install -r requirements.txt
+12. Example steps for Node.js project:
+   - Step X (setup): "Install local dependencies" → npm install (NEVER use -g)
 
 # Category Definitions
 - prerequisite: Install required software (Node.js, Docker, etc.)

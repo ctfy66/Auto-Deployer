@@ -6,6 +6,14 @@
 import re
 from typing import Dict, List, Optional
 from dataclasses import dataclass
+from enum import Enum
+
+
+class CommandType(Enum):
+    """命令类型分类"""
+    NOISE = "noise"  # 噪音型:输出冗长但无价值(npm install, pip install)
+    INFO = "info"    # 信息型:输出本身就是目标(ls, cat, pwd)
+    OPERATION = "operation"  # 操作型:需要关键信息(git clone, docker run)
 
 
 @dataclass
@@ -20,6 +28,41 @@ class ExtractedOutput:
 
 class CommandOutputExtractor:
     """命令输出智能提取器"""
+
+    # 命令分类规则
+    NOISE_COMMANDS = [
+        # 包管理器安装命令
+        r'^npm\s+install', r'^npm\s+i\s', r'^yarn\s+install', r'^yarn\s+add',
+        r'^pip\s+install', r'^pip3\s+install',
+        r'^apt-get\s+install', r'^apt\s+install', r'^yum\s+install',
+        r'^brew\s+install', r'^dnf\s+install',
+        # 包管理器更新命令
+        r'^npm\s+update', r'^apt-get\s+update', r'^yum\s+update',
+        # 构建命令(输出冗长)
+        r'^npm\s+run\s+build', r'^yarn\s+build', r'^mvn\s+package',
+        r'^gradle\s+build', r'^make\s+',
+    ]
+
+    INFO_COMMANDS = [
+        # 文件/目录查看
+        r'^ls\s', r'^ls$', r'^dir\s', r'^dir$',
+        r'^cat\s', r'^type\s',  # type是Windows的cat
+        r'^head\s', r'^tail\s',
+        r'^pwd$', r'^echo\s',
+        # 查询命令
+        r'^which\s', r'^where\s', r'^whereis\s',
+        r'^env$', r'^printenv',
+        # 版本查询
+        r'^node\s+-v', r'^npm\s+-v', r'^python\s+--version',
+        r'^java\s+-version', r'^git\s+--version',
+        # 进程/服务查询
+        r'^ps\s', r'^top\s', r'^netstat\s', r'^ss\s',
+        r'^systemctl\s+status', r'^service\s+\w+\s+status',
+        # 文件查找
+        r'^find\s', r'^grep\s', r'^rg\s',
+        # 内容读取
+        r'^Get-Content\s', r'^Get-ChildItem\s',  # PowerShell
+    ]
 
     # 关键信息模式（成功时提取）
     KEY_PATTERNS = {
@@ -65,6 +108,31 @@ class CommandOutputExtractor:
         self.max_success_lines = max_success_lines
         self.max_error_lines = max_error_lines
 
+    def _classify_command(self, command: str) -> CommandType:
+        """
+        分类命令类型
+
+        Args:
+            command: 要执行的命令
+
+        Returns:
+            CommandType: 命令类型
+        """
+        command_lower = command.strip().lower()
+
+        # 检查是否为噪音型命令
+        for pattern in self.NOISE_COMMANDS:
+            if re.match(pattern, command_lower):
+                return CommandType.NOISE
+
+        # 检查是否为信息型命令
+        for pattern in self.INFO_COMMANDS:
+            if re.match(pattern, command_lower):
+                return CommandType.INFO
+
+        # 默认为操作型命令
+        return CommandType.OPERATION
+
     def extract(
         self,
         stdout: str,
@@ -89,8 +157,11 @@ class CommandOutputExtractor:
         full_output = f"{stdout}\n{stderr}".strip()
         full_length = len(full_output)
 
+        # 分类命令
+        cmd_type = self._classify_command(command)
+
         if success:
-            return self._extract_success_output(stdout, stderr, command, full_length)
+            return self._extract_success_output(stdout, stderr, command, full_length, cmd_type)
         else:
             return self._extract_error_output(stdout, stderr, exit_code, command, full_length)
 
@@ -99,13 +170,105 @@ class CommandOutputExtractor:
         stdout: str,
         stderr: str,
         command: str,
-        full_length: int
+        full_length: int,
+        cmd_type: CommandType
     ) -> ExtractedOutput:
         """提取成功时的关键信息"""
+        combined_output = f"{stdout}\n{stderr}"
+
+        # 根据命令类型应用不同策略
+        if cmd_type == CommandType.NOISE:
+            # 噪音型:只保留摘要信息
+            return self._extract_noise_output(combined_output, command, full_length)
+        elif cmd_type == CommandType.INFO:
+            # 信息型:完整保留输出(最多1000行)
+            return self._extract_info_output(combined_output, command, full_length)
+        else:
+            # 操作型:提取关键信息(原有逻辑)
+            return self._extract_operation_output(combined_output, command, full_length)
+
+    def _extract_noise_output(
+        self,
+        combined_output: str,
+        command: str,
+        full_length: int
+    ) -> ExtractedOutput:
+        """噪音型命令:只保留最少信息"""
+        lines = combined_output.split('\n')
+        key_info = []
+
+        # 1. 提取关键模式(port/pid等)
+        for info_type, pattern in self.KEY_PATTERNS.items():
+            matches = re.findall(pattern, combined_output, re.IGNORECASE)
+            if matches:
+                unique_matches = list(set(matches))[:2]
+                for match in unique_matches:
+                    key_info.append(f"{info_type}: {match}")
+
+        # 2. 提取包含成功标志的行(最多3行)
+        success_keywords = ['successfully', 'success', 'completed', 'done', '成功', '完成']
+        for line in lines:
+            if len(key_info) >= 3:
+                break
+            line_stripped = line.strip()
+            if any(kw in line_stripped.lower() for kw in success_keywords):
+                if len(line_stripped) < 150:
+                    key_info.append(line_stripped)
+
+        # 3. 如果什么都没提取到,就保留最后一行
+        if not key_info:
+            last_line = lines[-1].strip() if lines else ""
+            if last_line:
+                key_info.append(last_line)
+
+        summary = f"✓ {command[:40]}... (Output suppressed: {len(lines)} lines)"
+        extracted_text = "\n".join(key_info)
+
+        return ExtractedOutput(
+            summary=summary,
+            key_info=key_info,
+            error_context=None,
+            full_length=full_length,
+            extracted_length=len(extracted_text)
+        )
+
+    def _extract_info_output(
+        self,
+        combined_output: str,
+        command: str,
+        full_length: int
+    ) -> ExtractedOutput:
+        """信息型命令:完整保留输出"""
+        lines = combined_output.split('\n')
+
+        # 保留所有行,但限制最多1000行避免内存问题
+        max_lines = 1000
+        if len(lines) > max_lines:
+            key_info = lines[:max_lines]
+            key_info.append(f"... ({len(lines) - max_lines} more lines omitted)")
+        else:
+            key_info = lines
+
+        summary = f"✓ {command[:50]} (Full output: {len(lines)} lines)"
+
+        return ExtractedOutput(
+            summary=summary,
+            key_info=key_info,
+            error_context=None,
+            full_length=full_length,
+            extracted_length=len("\n".join(key_info))
+        )
+
+    def _extract_operation_output(
+        self,
+        combined_output: str,
+        command: str,
+        full_length: int
+    ) -> ExtractedOutput:
+        """操作型命令:提取关键信息(原有逻辑)"""
         key_info = []
 
         # 1. 提取关键模式匹配
-        combined_output = f"{stdout}\n{stderr}"
         for info_type, pattern in self.KEY_PATTERNS.items():
             matches = re.findall(pattern, combined_output, re.IGNORECASE)
             if matches:
