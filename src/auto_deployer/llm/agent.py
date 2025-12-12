@@ -349,7 +349,7 @@ class DeploymentAgent:
             if action.action_type == "execute" and action.command:
                 logger.info(f"🔧 Executing: {action.command}")
                 if action.reasoning:
-                    logger.info(f"   Reason: {action.reasoning}")
+                    logger.info(f"   💭 Reason: {action.reasoning}")
                 
                 # 执行命令
                 result = self._execute_command(ssh_session, action.command)
@@ -362,13 +362,24 @@ class DeploymentAgent:
                     exit_code=result.exit_code,
                     command=action.command
                 )
+                
+                # 格式化为LLM可读的输出
+                formatted_output = self.output_extractor.format_for_llm(extracted)
+                
+                # 打印到终端 - 显示提取后的输出
+                print("\n" + "=" * 60)
+                print("📤 LLM将看到的提取后输出:")
+                print("-" * 60)
+                print(formatted_output)
+                print("=" * 60 + "\n")
 
                 # 记录命令结果（完整保存到日志文件）
                 step_log["result"] = {
                     "success": result.success,
                     "exit_code": result.exit_code,
-                    "stdout": result.stdout[:2000] if result.stdout else "",
-                    "stderr": result.stderr[:2000] if result.stderr else "",
+                    "extracted_output": formatted_output,  # 提取后的输出
+                    "stdout": result.stdout[:2000] if result.stdout else "",  # 原始输出
+                    "stderr": result.stderr[:2000] if result.stderr else "",  # 原始错误
                     "extracted_summary": extracted.summary,
                 }
                 self.deployment_log["steps"].append(step_log)
@@ -594,17 +605,38 @@ class DeploymentAgent:
             if action.action_type == "execute" and action.command:
                 logger.info(f"🔧 Executing: {action.command}")
                 if action.reasoning:
-                    logger.info(f"   Reason: {action.reasoning}")
+                    logger.info(f"   💭 Reason: {action.reasoning}")
                 
                 # 执行本地命令
                 result = self._execute_local_command(local_session, action.command)
+                
+                # 使用智能提取器处理输出
+                extracted = self.output_extractor.extract(
+                    stdout=result.stdout or "",
+                    stderr=result.stderr or "",
+                    success=result.success,
+                    exit_code=result.exit_code,
+                    command=action.command
+                )
+                
+                # 格式化为LLM可读的输出
+                formatted_output = self.output_extractor.format_for_llm(extracted)
+                
+                # 打印到终端 - 显示提取后的输出
+                print("\n" + "=" * 60)
+                print("📤 LLM将看到的提取后输出:")
+                print("-" * 60)
+                print(formatted_output)
+                print("=" * 60 + "\n")
                 
                 # 记录命令结果
                 step_log["result"] = {
                     "success": result.success,
                     "exit_code": result.exit_code,
-                    "stdout": result.stdout[:2000] if result.stdout else "",
-                    "stderr": result.stderr[:2000] if result.stderr else "",
+                    "extracted_output": formatted_output,  # 提取后的输出
+                    "stdout": result.stdout[:2000] if result.stdout else "",  # 原始输出
+                    "stderr": result.stderr[:2000] if result.stderr else "",  # 原始错误
+                    "extracted_summary": extracted.summary,
                 }
                 self.deployment_log["steps"].append(step_log)
                 

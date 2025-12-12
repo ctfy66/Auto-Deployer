@@ -2,6 +2,8 @@
 
 This module contains common prompt fragments that are used across multiple
 prompts to ensure consistency and reduce duplication.
+
+For Chain of Thought reasoning templates, see cot_framework.py
 """
 
 # ============================================================================
@@ -486,3 +488,38 @@ def get_deployment_strategies(os_type: str = "linux") -> str:
 
 {DEPLOYMENT_STRATEGY_STATIC}
 """
+
+
+# ============================================================================
+# Re-export Chain of Thought framework for convenience
+# ============================================================================
+
+try:
+    from .cot_framework import (
+        CHAIN_OF_THOUGHT_FRAMEWORK,
+        PLANNING_COT_TEMPLATE,
+        EXECUTION_COT_TEMPLATE,
+        ERROR_ANALYSIS_COT,
+        USER_FEEDBACK_COT,
+        REASONING_OUTPUT_FORMAT,
+        get_cot_framework,
+        get_reasoning_requirements,
+    )
+    __all__ = [
+        "USER_INTERACTION_GUIDE",
+        "ERROR_DIAGNOSIS_FRAMEWORK",
+        "get_environment_isolation_rules",
+        "get_deployment_strategies",
+        # Chain of Thought exports
+        "CHAIN_OF_THOUGHT_FRAMEWORK",
+        "PLANNING_COT_TEMPLATE",
+        "EXECUTION_COT_TEMPLATE",
+        "ERROR_ANALYSIS_COT",
+        "USER_FEEDBACK_COT",
+        "REASONING_OUTPUT_FORMAT",
+        "get_cot_framework",
+        "get_reasoning_requirements",
+    ]
+except ImportError:
+    # cot_framework.py not yet available (during initial setup)
+    pass

@@ -265,10 +265,12 @@ class DeploymentOrchestrator:
             "commands": [
                 {
                     "command": c.command,
+                    "reasoning": getattr(c, '_reasoning', None),  # 添加reasoning
                     "success": c.success,
                     "exit_code": c.exit_code,
-                    "stdout": c.stdout[:1000] if c.stdout else "",
-                    "stderr": c.stderr[:500] if c.stderr else "",
+                    "extracted_output": getattr(c, '_extracted_output', None),  # 提取后的输出
+                    "stdout": getattr(c, '_original_stdout', c.stdout[:1000] if c.stdout else ""),  # 原始输出（截断）
+                    "stderr": getattr(c, '_original_stderr', c.stderr[:500] if c.stderr else ""),  # 原始错误（截断）
                     "timestamp": c.timestamp,
                 }
                 for c in step_ctx.commands

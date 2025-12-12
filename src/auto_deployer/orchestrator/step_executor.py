@@ -11,7 +11,6 @@ from .models import (
     StepContext, StepResult, StepAction, ActionType,
     CommandRecord, StepStatus, DeployContext
 )
-from ..prompts import STEP_EXECUTION_PROMPT, STEP_EXECUTION_PROMPT_WINDOWS
 from ..llm.output_extractor import CommandOutputExtractor
 
 if TYPE_CHECKING:
@@ -88,9 +87,9 @@ class StepExecutor:
                 # 执行命令
                 logger.info(f"   🔧 [{iteration}] {action.command}")
                 if action.reasoning:
-                    logger.debug(f"      Reason: {action.reasoning}")
+                    logger.info(f"      💭 Reason: {action.reasoning}")
                 
-                record = self._execute_command(action.command)
+                record = self._execute_command(action.command, action.reasoning)
                 step_ctx.commands.append(record)
                 
                 status = "✓" if record.success else "✗"
@@ -145,24 +144,44 @@ class StepExecutor:
     ) -> StepAction:
         """调用 LLM 获取下一步动作"""
         
-        # 选择 prompt 模板
-        template = STEP_EXECUTION_PROMPT_WINDOWS if self.is_windows else STEP_EXECUTION_PROMPT
+        # 使用函数式 prompt 构建器（而不是已弃用的常量）
+        from ..prompts.execution_step import (
+            build_step_execution_prompt,
+            build_step_execution_prompt_windows
+        )
         
         # 构建 prompt
-        prompt = template.format(
-            step_id=step_ctx.step_id,
-            step_name=step_ctx.step_name,
-            category=step_ctx.category,
-            goal=step_ctx.goal,
-            success_criteria=step_ctx.success_criteria,
-            repo_url=deploy_ctx.repo_url,
-            deploy_dir=deploy_ctx.deploy_dir,
-            host_info=json.dumps(deploy_ctx.host_info, indent=2, ensure_ascii=False),
-            commands_history=self._format_commands(step_ctx.commands),
-            user_interactions=self._format_interactions(step_ctx.user_interactions),
-            max_iterations=self.max_iterations,
-            current_iteration=step_ctx.iteration,
-        )
+        if self.is_windows:
+            prompt = build_step_execution_prompt_windows(
+                step_id=step_ctx.step_id,
+                step_name=step_ctx.step_name,
+                category=step_ctx.category,
+                goal=step_ctx.goal,
+                success_criteria=step_ctx.success_criteria,
+                repo_url=deploy_ctx.repo_url,
+                deploy_dir=deploy_ctx.deploy_dir,
+                host_info=json.dumps(deploy_ctx.host_info, indent=2, ensure_ascii=False),
+                commands_history=self._format_commands(step_ctx.commands),
+                user_interactions=self._format_interactions(step_ctx.user_interactions),
+                max_iterations=self.max_iterations,
+                current_iteration=step_ctx.iteration,
+            )
+        else:
+            prompt = build_step_execution_prompt(
+                step_id=step_ctx.step_id,
+                step_name=step_ctx.step_name,
+                category=step_ctx.category,
+                goal=step_ctx.goal,
+                success_criteria=step_ctx.success_criteria,
+                repo_url=deploy_ctx.repo_url,
+                deploy_dir=deploy_ctx.deploy_dir,
+                host_info=json.dumps(deploy_ctx.host_info, indent=2, ensure_ascii=False),
+                commands_history=self._format_commands(step_ctx.commands),
+                user_interactions=self._format_interactions(step_ctx.user_interactions),
+                max_iterations=self.max_iterations,
+                current_iteration=step_ctx.iteration,
+                os_type="linux",
+            )
         
         # 调用 LLM
         response_text = self._call_llm(prompt)
@@ -218,7 +237,7 @@ class StepExecutor:
                 message=f"Failed to parse LLM response: {text[:100]}"
             )
     
-    def _execute_command(self, command: str) -> CommandRecord:
+    def _execute_command(self, command: str, reasoning: Optional[str] = None) -> CommandRecord:
         """执行命令并智能提取输出"""
         try:
             result = self.session.run(command, timeout=600, idle_timeout=60)
@@ -248,8 +267,9 @@ class StepExecutor:
             if extracted.key_info:
                 logger.debug(f"Key info: {extracted.key_info[:5]}")  # 只记录前5条
 
-            # 返回包含提取后输出的CommandRecord
-            return CommandRecord(
+            # 返回包含提取后输出和reasoning的CommandRecord
+            # 注意：CommandRecord需要扩展以支持reasoning和extracted_output字段
+            record = CommandRecord(
                 command=command,
                 success=result.ok,
                 exit_code=result.exit_status,
@@ -258,6 +278,14 @@ class StepExecutor:
                 stderr="",  # 错误已整合到stdout的格式化输出中
                 timestamp=extracted.summary if hasattr(extracted, 'summary') else ""
             )
+            
+            # 临时存储额外信息（用于日志记录）
+            record._reasoning = reasoning  # type: ignore
+            record._extracted_output = formatted_output  # type: ignore
+            record._original_stdout = result.stdout[:2000] if result.stdout else ""  # type: ignore
+            record._original_stderr = result.stderr[:2000] if result.stderr else ""  # type: ignore
+            
+            return record
         except Exception as e:
             logger.error(f"Command execution error: {e}")
             return CommandRecord(

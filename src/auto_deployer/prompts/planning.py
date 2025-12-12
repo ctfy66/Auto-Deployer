@@ -5,6 +5,7 @@ where the LLM analyzes the repository and generates a structured deployment plan
 """
 
 from typing import Optional
+from .cot_framework import PLANNING_COT_TEMPLATE, get_reasoning_requirements
 
 
 def build_planning_prompt(
@@ -31,7 +32,8 @@ def build_planning_prompt(
         Formatted planning prompt ready to send to LLM
     """
     return f"""# Role
-You are a DevOps deployment planner. Analyze the repository and create a structured deployment plan.
+You are a DevOps deployment planner with systematic reasoning capabilities.
+Analyze the repository deeply and create a structured deployment plan using Chain of Thought reasoning.
 
 # Input
 - Repository: {repo_url}
@@ -44,8 +46,10 @@ You are a DevOps deployment planner. Analyze the repository and create a structu
 # Repository Analysis
 {repo_analysis}
 
+{PLANNING_COT_TEMPLATE}
+
 # Task
-Create a deployment plan. Think carefully about:
+Create a deployment plan using the systematic reasoning process above. Think deeply about:
 1. What deployment strategy is best? (Docker if Dockerfile exists, traditional otherwise)
 2. What components need to be installed? (Node.js, Python, Nginx, etc.)
 3. What are the exact steps to deploy this project?
@@ -116,7 +120,43 @@ Output a JSON object with this exact structure:
 - deploy: Start services, configure web server
 - verify: Test that deployment is working
 
-Output ONLY valid JSON, no markdown code fence, no explanation."""
+# Output Format
+
+FIRST, show your reasoning process (this helps improve the system):
+```
+## Project Understanding
+[Your analysis of the project type, tech stack, and requirements]
+
+## Environment Analysis
+[Your analysis of the target environment and constraints]
+
+## Strategy Reasoning
+[Why you're choosing this strategy over alternatives]
+Docker-Compose: [pros/cons for this project]
+Docker: [pros/cons for this project]
+Traditional: [pros/cons for this project]
+Chosen: [X] because [reasoning]
+
+## Step Design Logic
+[How you're breaking down the deployment and why]
+
+## Risk Assessment
+[What could go wrong and how you're mitigating it]
+```
+
+THEN, output the JSON plan (no markdown code fence):
+```json
+{{{{
+  "strategy": "...",
+  "components": [...],
+  "steps": [...],
+  "risks": [...],
+  "notes": [...],
+  "estimated_time": "..."
+}}}}
+```
+
+Output your reasoning first, THEN the JSON plan."""
 
 
 def build_host_details_local(

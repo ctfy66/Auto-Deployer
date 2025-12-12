@@ -350,30 +350,41 @@ class CommandOutputExtractor:
         )
 
     def _extract_error_lines(self, text: str) -> List[str]:
-        """从文本中提取错误相关行 - 使用简单的头尾截取策略
-        
-        策略说明：
-        - 错误信息可能在开头（如PowerShell错误描述）或结尾（如Linux堆栈跟踪）
-        - 使用头尾结合的方式，确保不丢失关键信息
-        - 避免复杂的模式匹配，提高可靠性和可维护性
-        """
+        """从文本中提取错误相关行"""
         lines = text.split('\n')
-        # 去除空行和噪音行
-        clean_lines = [l.strip() for l in lines if l.strip() and not self._is_noise(l.strip())]
-        
-        # 如果行数少，全部保留
-        if len(clean_lines) <= 20:
-            return clean_lines
-        
-        # 头尾结合：前5行 + 后10行
-        head_lines = clean_lines[:5]
-        tail_lines = clean_lines[-10:]
-        
-        # 计算中间跳过了多少行
-        omitted_count = len(clean_lines) - 15
-        separator = [f"... ({omitted_count} lines omitted) ..."] if omitted_count > 0 else []
-        
-        return head_lines + separator + tail_lines
+        error_lines = []
+
+        for i, line in enumerate(lines):
+            line_stripped = line.strip()
+
+            # 跳过噪音行
+            if self._is_noise(line_stripped):
+                continue
+
+            # 检查是否匹配错误模式
+            is_error_line = False
+            for pattern in self.ERROR_PATTERNS.values():
+                if re.search(pattern, line_stripped):
+                    is_error_line = True
+                    break
+
+            if is_error_line:
+                # 添加错误行及其上下文（前1行，后2行）
+                context_start = max(0, i - 1)
+                context_end = min(len(lines), i + 3)
+                context_lines = lines[context_start:context_end]
+
+                for ctx_line in context_lines:
+                    ctx_stripped = ctx_line.strip()
+                    if ctx_stripped and not self._is_noise(ctx_stripped):
+                        if ctx_stripped not in error_lines:  # 去重
+                            error_lines.append(ctx_stripped)
+
+        # 如果没有匹配到错误模式，返回最后几行
+        if not error_lines:
+            error_lines = [l.strip() for l in lines[-10:] if l.strip() and not self._is_noise(l.strip())]
+
+        return error_lines
 
     def _is_noise(self, line: str) -> bool:
         """判断是否为噪音行"""
@@ -429,10 +440,10 @@ class CommandOutputExtractor:
         """生成错误总结"""
         cmd_short = command[:50] + "..." if len(command) > 50 else command
 
-        # 提取第一行错误消息（增加长度限制以显示完整的PowerShell错误描述）
+        # 提取第一行错误消息
         first_error = error_lines[0] if error_lines else "No error details"
-        if len(first_error) > 200:
-            first_error = first_error[:200] + "..."
+        if len(first_error) > 80:
+            first_error = first_error[:80] + "..."
 
         return f"✗ Command failed (exit {exit_code}): {cmd_short} | {error_type}: {first_error}"
 
