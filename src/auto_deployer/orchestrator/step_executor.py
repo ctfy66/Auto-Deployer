@@ -9,8 +9,9 @@ from typing import Optional, Union, TYPE_CHECKING
 
 from .models import (
     StepContext, StepResult, StepAction, ActionType,
-    CommandRecord, StepStatus, DeployContext
+    CommandRecord, StepStatus, DeployContext, StepOutputs, ExecutionSummary
 )
+from .prompts import build_step_system_prompt, build_step_user_prompt
 from ..llm.output_extractor import CommandOutputExtractor
 
 if TYPE_CHECKING:
@@ -85,11 +86,12 @@ class StepExecutor:
             
             if action.action_type == ActionType.EXECUTE:
                 # 执行命令
-                logger.info(f"   🔧 [{iteration}] {action.command}")
+                command = action.command or ""
+                logger.info(f"   🔧 [{iteration}] {command}")
                 if action.reasoning:
                     logger.info(f"      💭 Reason: {action.reasoning}")
                 
-                record = self._execute_command(action.command, action.reasoning)
+                record = self._execute_command(command, action.reasoning)
                 step_ctx.commands.append(record)
                 
                 status = "✓" if record.success else "✗"
@@ -101,11 +103,25 @@ class StepExecutor:
                     logger.warning(f"      stderr: {record.stderr[:200]}")
                 
             elif action.action_type == ActionType.STEP_DONE:
-                # 步骤完成
+                # 步骤完成 - 验证并处理结构化产出
                 logger.info(f"   ✅ Step completed: {action.message}")
                 step_ctx.status = StepStatus.SUCCESS
-                step_ctx.outputs = action.outputs or {}
-                return StepResult.succeeded(outputs=step_ctx.outputs)
+                
+                # 验证并解析结构化产出
+                structured_outputs = self._validate_outputs(action.outputs)
+                if structured_outputs:
+                    step_ctx.structured_outputs = structured_outputs
+                    step_ctx.outputs = structured_outputs.to_dict()
+                    logger.info(f"   📦 Outputs: {structured_outputs.summary}")
+                else:
+                    # 如果没有有效的结构化产出，创建一个基本的
+                    step_ctx.outputs = action.outputs or {}
+                    logger.warning("   ⚠️ No structured outputs provided")
+                
+                return StepResult.succeeded(
+                    outputs=step_ctx.outputs,
+                    structured_outputs=structured_outputs
+                )
                 
             elif action.action_type == ActionType.STEP_FAILED:
                 # 步骤失败
@@ -342,4 +358,88 @@ class StepExecutor:
             lines.append(f"{i}. Q: {item['question']}")
             lines.append(f"   A: {item['response']}")
         return "\n".join(lines)
+    
+    def _validate_outputs(self, outputs_dict: Optional[dict]) -> Optional[StepOutputs]:
+        """验证并解析步骤产出
+        
+        Args:
+            outputs_dict: LLM 返回的 outputs 字典
+            
+        Returns:
+            StepOutputs 对象，如果验证失败则返回 None
+        """
+        if not outputs_dict:
+            logger.warning("No outputs provided in step_done action")
+            return None
+        
+        if not isinstance(outputs_dict, dict):
+            logger.warning(f"Outputs is not a dict: {type(outputs_dict)}")
+            return None
+        
+        # 验证必填字段
+        summary = outputs_dict.get("summary")
+        if not summary or not isinstance(summary, str):
+            logger.warning("outputs.summary is required and must be a string")
+            # 尝试从其他字段生成摘要
+            if outputs_dict.get("message"):
+                summary = str(outputs_dict["message"])
+            else:
+                summary = "Step completed"
+        
+        try:
+            return StepOutputs(
+                summary=summary,
+                environment_changes=outputs_dict.get("environment_changes", {}),
+                new_configurations=outputs_dict.get("new_configurations", {}),
+                artifacts=outputs_dict.get("artifacts", []),
+                services_started=outputs_dict.get("services_started", []),
+                custom_data=outputs_dict.get("custom_data", {}),
+                issues_resolved=outputs_dict.get("issues_resolved", []),
+            )
+        except Exception as e:
+            logger.error(f"Failed to create StepOutputs: {e}")
+            return None
+    
+    def _get_next_action_with_summary(
+        self,
+        step_ctx: StepContext,
+        deploy_ctx: DeployContext,
+        execution_summary: Optional[ExecutionSummary] = None,
+        last_command_result: Optional[dict] = None,
+        user_response: Optional[str] = None,
+    ) -> StepAction:
+        """使用新的 prompt 模板获取 LLM 决策（带执行摘要）
+        
+        Args:
+            step_ctx: 步骤上下文
+            deploy_ctx: 部署上下文
+            execution_summary: 全局执行摘要
+            last_command_result: 上一条命令的结果
+            user_response: 用户回复
+            
+        Returns:
+            StepAction 决策
+        """
+        # 如果有执行摘要，使用新的 prompt 模板
+        if execution_summary:
+            system_prompt = build_step_system_prompt(
+                ctx=step_ctx,
+                summary=execution_summary,
+                is_windows=self.is_windows,
+            )
+            user_prompt = build_step_user_prompt(
+                ctx=step_ctx,
+                last_command_result=last_command_result,
+                user_response=user_response,
+            )
+            
+            # 组合 prompt
+            full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
+            
+            # 调用 LLM
+            response_text = self._call_llm(full_prompt)
+            return self._parse_action(response_text)
+        else:
+            # 回退到旧方法
+            return self._get_next_action(step_ctx, deploy_ctx)
 

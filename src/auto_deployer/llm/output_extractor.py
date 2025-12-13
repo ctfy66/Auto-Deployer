@@ -14,6 +14,7 @@ class CommandType(Enum):
     NOISE = "noise"  # 噪音型:输出冗长但无价值(npm install, pip install)
     INFO = "info"    # 信息型:输出本身就是目标(ls, cat, pwd)
     OPERATION = "operation"  # 操作型:需要关键信息(git clone, docker run)
+    DIRECTORY = "directory"  # 目录列表型:需要提取文件/目录名(ls, dir, Get-ChildItem)
 
 
 @dataclass
@@ -61,7 +62,18 @@ class CommandOutputExtractor:
         # 文件查找
         r'^find\s', r'^grep\s', r'^rg\s',
         # 内容读取
-        r'^Get-Content\s', r'^Get-ChildItem\s',  # PowerShell
+        r'^Get-Content\s',  # PowerShell
+    ]
+
+    # 目录列表命令（需要提取文件/目录名）
+    # 注意：命令会被转为小写后匹配，所以模式也要小写
+    DIRECTORY_COMMANDS = [
+        # PowerShell (小写匹配)
+        r'^get-childitem\s', r'^get-childitem$', r'^gci\s', r'^gci$',
+        # Windows CMD
+        r'^dir\s', r'^dir$',
+        # Linux/macOS
+        r'^ls\s', r'^ls$', r'^ls\s+-[alh]+',
     ]
 
     # 关键信息模式（成功时提取）
@@ -70,7 +82,8 @@ class CommandOutputExtractor:
         'pid': r'(?:pid|process id|进程ID)[:：\s]+(\d+)',
         'url': r'https?://[^\s]+',
         'ip': r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b',
-        'path': r'/[/\w\-\.]+|[A-Z]:[/\\][\w\-\\/.]+',
+        # Unix路径必须以字母/下划线开头，避免匹配日期如 /12/12
+        'path': r'/(?:[a-zA-Z_][\w\-\.]*/?)+|[A-Z]:[/\\][\w\-\\/.]+',
         'version': r'v?\d+\.\d+\.\d+',
         'status': r'(?:status|状态)[:：\s]+(running|stopped|active|inactive|启动|停止)',
     }
@@ -124,6 +137,11 @@ class CommandOutputExtractor:
         for pattern in self.NOISE_COMMANDS:
             if re.match(pattern, command_lower):
                 return CommandType.NOISE
+
+        # 检查是否为目录列表命令（优先于 INFO，因为需要特殊处理）
+        for pattern in self.DIRECTORY_COMMANDS:
+            if re.match(pattern, command_lower):
+                return CommandType.DIRECTORY
 
         # 检查是否为信息型命令
         for pattern in self.INFO_COMMANDS:
@@ -183,6 +201,9 @@ class CommandOutputExtractor:
         elif cmd_type == CommandType.INFO:
             # 信息型:完整保留输出(最多1000行)
             return self._extract_info_output(combined_output, command, full_length)
+        elif cmd_type == CommandType.DIRECTORY:
+            # 目录列表型:提取文件/目录名
+            return self._extract_directory_listing(combined_output, command, full_length)
         else:
             # 操作型:提取关键信息(原有逻辑)
             return self._extract_operation_output(combined_output, command, full_length)
@@ -257,6 +278,114 @@ class CommandOutputExtractor:
             error_context=None,
             full_length=full_length,
             extracted_length=len("\n".join(key_info))
+        )
+
+    def _extract_directory_listing(
+        self,
+        combined_output: str,
+        command: str,
+        full_length: int
+    ) -> ExtractedOutput:
+        """目录列表型命令:提取文件/目录名
+        
+        支持格式:
+        - PowerShell Get-ChildItem (Mode, LastWriteTime, Length, Name)
+        - Linux ls -l (permissions, links, owner, group, size, date, name)
+        - 简单 ls 输出 (空格/换行分隔的文件名)
+        """
+        lines = combined_output.split('\n')
+        key_info = []
+        directory_path = None
+        
+        # 1. 尝试提取目录路径（PowerShell 格式："目录: C:\path"）
+        for line in lines:
+            line_stripped = line.strip()
+            # PowerShell 中文/英文目录标识
+            if line_stripped.startswith('目录:') or line_stripped.startswith('Directory:'):
+                directory_path = line_stripped.split(':', 1)[-1].strip()
+                key_info.append(f"path: {directory_path}")
+                break
+        
+        # 2. 解析 PowerShell Get-ChildItem 表格格式
+        # 格式1 (带 Length): d-----  2025/12/12  23:52  1234  filename
+        # 格式2 (无 Length, -Directory): d-----  2025/12/12  23:52  dirname
+        # 通用模式: Mode(6字符) + 日期时间 + 可选Length + Name
+        # 使用更简单的方法：按空格分割，检查第一列是否是 Mode
+        
+        for line in lines:
+            line_stripped = line.strip()
+            parts = line_stripped.split()
+            
+            # 需要至少4列：Mode, Date, Time, Name（或更多）
+            if len(parts) < 4:
+                continue
+            
+            mode = parts[0]
+            # 检查是否是有效的 PowerShell Mode 格式（6字符，以 d/- 开头）
+            if len(mode) == 6 and mode[0] in 'dD-' and all(c in 'dDaArRhHsSlL-' for c in mode):
+                # 跳过标题行
+                if mode == '------' or mode.lower() == 'mode':
+                    continue
+                
+                # 最后一个部分是文件/目录名
+                name = parts[-1]
+                
+                # 跳过标题行的 "Name"
+                if name.lower() == 'name' or name.startswith('--'):
+                    continue
+                
+                is_dir = mode.lower().startswith('d')
+                prefix = "[DIR]" if is_dir else "[FILE]"
+                key_info.append(f"{prefix} {name}")
+        
+        # 3. 如果没有匹配到 PowerShell 格式，尝试 Linux ls -l 格式
+        # 格式: drwxr-xr-x 2 user group 4096 Dec 12 23:52 dirname
+        if len(key_info) <= 1:  # 只有路径或空
+            linux_pattern = r'^([drwx\-]{10})\s+\d+\s+\S+\s+\S+\s+\d+\s+\w+\s+\d+\s+[\d:]+\s+(.+)$'
+            for line in lines:
+                line_stripped = line.strip()
+                match = re.match(linux_pattern, line_stripped)
+                if match:
+                    mode = match.group(1)
+                    name = match.group(2).strip()
+                    if name:
+                        is_dir = mode.startswith('d')
+                        prefix = "[DIR]" if is_dir else "[FILE]"
+                        key_info.append(f"{prefix} {name}")
+        
+        # 4. 如果还是没有匹配，尝试简单的文件名列表（ls 无参数输出）
+        if len(key_info) <= 1:
+            for line in lines:
+                line_stripped = line.strip()
+                # 跳过空行、标题行、分隔线
+                if not line_stripped or line_stripped.startswith('-') or 'Mode' in line_stripped:
+                    continue
+                # 跳过目录路径行
+                if line_stripped.startswith('目录:') or line_stripped.startswith('Directory:'):
+                    continue
+                # 简单文件名（可能空格分隔多个）
+                names = line_stripped.split()
+                for name in names:
+                    if name and len(name) < 256:  # 合理的文件名长度
+                        key_info.append(f"[ITEM] {name}")
+        
+        # 5. 限制最大条目数
+        max_items = 100
+        if len(key_info) > max_items:
+            key_info = key_info[:max_items]
+            key_info.append(f"... ({len(key_info) - max_items} more items)")
+        
+        # 6. 生成摘要
+        item_count = len([k for k in key_info if k.startswith('[DIR]') or k.startswith('[FILE]') or k.startswith('[ITEM]')])
+        summary = self._generate_success_summary(command, key_info[:5])
+        
+        extracted_text = "\n".join(key_info)
+        return ExtractedOutput(
+            summary=summary,
+            key_info=key_info,
+            error_context=None,
+            full_length=full_length,
+            extracted_length=len(extracted_text)
         )
 
     def _extract_operation_output(
@@ -457,10 +586,8 @@ class CommandOutputExtractor:
                 error_preview += f"\n... ({len(extracted.error_context) - 800} more chars)"
             parts.append(error_preview)
 
-        # 添加压缩比信息
-        if extracted.full_length > 0:
-            ratio = (1 - extracted.extracted_length / extracted.full_length) * 100
-            parts.append(f"[Compressed: {extracted.full_length}→{extracted.extracted_length} chars, {ratio:.1f}% saved]")
+        # 压缩比信息不包含在LLM上下文中，只通过logger记录
+        # 调用方会通过logger.info记录压缩统计信息
 
         return "\n".join(parts)
 

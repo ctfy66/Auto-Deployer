@@ -83,11 +83,11 @@ Focus ONLY on completing this specific step using Chain of Thought reasoning.
 
 # Available Actions (respond with JSON including reasoning)
 
-1. Execute a command (⚠️ PREFER ONE ATOMIC COMMAND):
+1. Execute a command:
 ```json
 {{
   "action": "execute",
-  "command": "single atomic command (avoid chaining unless necessary)",
+  "command": "your command here",
   "reasoning": {{
     "observation": "current state and what you see",
     "analysis": "what you're trying to achieve",
@@ -98,10 +98,6 @@ Focus ONLY on completing this specific step using Chain of Thought reasoning.
   }}
 }}
 ```
-
-💡 BEST PRACTICE: Execute commands one at a time in separate actions.
-This makes debugging easier and allows better error handling.
-While `&&` works on Linux/macOS, separate actions are more reliable.
 
 2. Declare step completed (when success criteria is met):
 ```json
@@ -146,52 +142,23 @@ While `&&` works on Linux/macOS, separate actions are more reliable.
 }}
 ```
 
-# Rules (MANDATORY - NO EXCEPTIONS)
-
-1. **🔥 PREFER ONE COMMAND PER ACTION (BEST PRACTICE)**:
-   - Execute ONE atomic command per action for clarity and debugging
-   - While `&&` works on Linux/macOS, separate actions are more reliable
-   - If you must chain, use `&&` but keep it to 2-3 related commands max
-   - Example GOOD: Action 1: `cd /app`, Action 2: `npm install`
-   - Example ACCEPTABLE: `cd /app && npm install` (only if closely related)
-   - Example BAD: `cd /app && npm install && npm run build && npm start` (too many)
-
-2. **Focus on Current Step**:
-   - Focus ONLY on the current step's goal
-   - Don't think about other steps or overall deployment
-   - Use the success criteria to determine when step is done
-
-3. **Chain of Thought Reasoning (CRITICAL)**:
-   - Apply CoT reasoning before EVERY action
+# Rules
+1. Focus ONLY on the current step's goal - do not think about other steps
+2. Use the success criteria to determine when the step is done
+3. **CRITICAL: Apply Chain of Thought reasoning before EVERY action**:
    - OBSERVE the current state
    - ANALYZE what needs to be done
    - REASON about 2-3 possible approaches
    - DECIDE on the best approach with verification plan
-
-4. **Error Analysis**:
-   - If a command fails, use the Error Analysis CoT framework
+4. If a command fails, use the Error Analysis CoT framework:
    - Extract ALL error indicators (not just first line)
    - Build causal chain from symptom to root cause
    - Generate multiple solutions
    - Choose most likely fix based on specific errors
-   - Don't retry the same failed command without changing approach
-
-5. **Iteration Management**:
-   - Maximum {max_iterations} iterations for this step (current: {current_iteration})
-   - If stuck after 3 failed attempts with different approaches, ask user
-
-6. **Success Verification**:
-   - Declare step_done as soon as the success criteria is met
-   - Verify outputs match expected results
-   - Don't assume success from exit code alone
-
-7. **Background Processes**:
-   - For long-running commands (servers), use nohup or background execution
-   - Format: `nohup command > logfile 2>&1 &`
-
-8. **Asking for Help**:
-   - If stuck after multiple failures, use ask_user to explain the situation
-   - Provide clear context about what you've tried
+5. Maximum {max_iterations} iterations for this step (current: {current_iteration})
+6. Declare step_done as soon as the success criteria is met
+7. If stuck after multiple failures, use ask_user to explain the situation
+8. For long-running commands (servers), use nohup or background execution
 
 {ERROR_ANALYSIS_COT}
 
@@ -351,25 +318,21 @@ Focus ONLY on completing this specific step using Chain of Thought reasoning.
 
 # Available Actions (respond with JSON including reasoning)
 
-1. Execute a PowerShell command (⚠️ ONE COMMAND ONLY - NO CHAINING):
+1. Execute a PowerShell command:
 ```json
 {{
   "action": "execute",
-  "command": "single atomic PowerShell command (NO && or ||)",
+  "command": "your PowerShell command",
   "reasoning": {{
     "observation": "current state",
     "analysis": "goal and constraints",
     "alternatives_considered": ["options evaluated"],
-    "decision": "why this specific single command",
+    "decision": "why this command",
     "verification": "how to check success",
     "fallback": "what if fails"
   }}
 }}
 ```
-
-⚠️ CRITICAL: Each "execute" action must contain ONLY ONE atomic command.
-If you need to run multiple commands, create multiple sequential actions.
-DO NOT use `&&` to chain commands - it will fail in PowerShell 5.x.
 
 2. Declare step completed:
 ```json
@@ -413,134 +376,32 @@ DO NOT use `&&` to chain commands - it will fail in PowerShell 5.x.
 }}
 ```
 
-# Windows PowerShell Syntax Rules (CRITICAL - READ CAREFULLY)
-
-## ⚠️ COMMAND CHAINING RULES - MUST FOLLOW ⚠️
-
-### FORBIDDEN: Do NOT use these operators (they don't work reliably in all PowerShell versions)
-- ❌ `&&` - NOT supported in PowerShell 5.x (default on Windows 10/11)
-- ❌ `||` - NOT supported in PowerShell 5.x
-- ❌ Chaining with `&&` will cause: "标记"&&"不是此版本中的有效语句分隔符"
-
-### ALLOWED: Sequential command execution
-- ✅ **ONE COMMAND PER ACTION** (BEST PRACTICE - ALWAYS USE THIS)
-  ```json
-  {"action": "execute", "command": "cd C:\\project"}
-  // Then in next action:
-  {"action": "execute", "command": "python -m venv venv"}
-  ```
-
-- ✅ Semicolon `;` for simple sequential commands (use sparingly)
-  ```powershell
-  cd C:\\project; python -m venv venv
-  ```
-
-- ✅ Pipeline `|` for passing output between commands
-  ```powershell
-  Get-Process | Where-Object {$_.Name -eq "python"}
-  ```
-
-### 🔥 MANDATORY: Execute ONE command at a time
-**You MUST execute commands separately in sequential actions. Do NOT try to chain multiple operations.**
-
-Example of CORRECT approach:
-```json
-// Action 1: Change directory
-{"action": "execute", "command": "cd C:\\Users\\DELL\\project"}
-
-// Action 2: Create venv (after Action 1 succeeds)
-{"action": "execute", "command": "python -m venv venv"}
-
-// Action 3: Activate and install (after Action 2 succeeds)
-{"action": "execute", "command": ".\\venv\\Scripts\\Activate.ps1; pip install -r requirements.txt"}
-```
-
-## PowerShell Path Syntax
-- Use backslashes: `C:\\Users\\DELL\\project`
-- Or forward slashes: `C:/Users/DELL/project` (PowerShell auto-converts)
-- Use quotes for paths with spaces: `"C:\\Program Files\\App"`
-- Home directory: `$env:USERPROFILE` (NOT `~`)
-
-## Common PowerShell Commands
-- Clone: `git clone <repo> "C:\\Users\\DELL\\app"`
+# Windows PowerShell Commands
+- Clone: `git clone <repo> $env:USERPROFILE\\app`
 - Remove folder: `Remove-Item -Recurse -Force <path>`
-- Create directory: `New-Item -ItemType Directory -Path <path>`
-- Test path exists: `Test-Path <path>`
-- List directory: `Get-ChildItem <path>`
 - Background process: `Start-Process -NoNewWindow -FilePath "npm" -ArgumentList "start"`
 - Check process: `Get-Process -Name node -ErrorAction SilentlyContinue`
 - Check service: `Get-Service -Name Docker`
 - Service status: `(Get-Service -Name Docker).Status`
 - Start service: `Start-Service -Name Docker`
 - Find port usage: `netstat -ano | findstr :<port>`
-- Kill process: `Stop-Process -Id <pid> -Force`
 
-## Virtual Environment Activation (Common Issue)
-PowerShell venv activation often fails with "cannot be recognized as cmdlet" error.
-
-**Root Cause**: Execution policy or path issues
-
-**Solution Pattern**:
-```json
-// Step 1: Set execution policy first
-{"action": "execute", "command": "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force"}
-
-// Step 2: Try activation (might still fail if script doesn't exist)
-{"action": "execute", "command": "cd C:\\project; .\\venv\\Scripts\\Activate.ps1"}
-
-// Step 3: If activation fails, install dependencies using venv's pip directly
-{"action": "execute", "command": ".\\venv\\Scripts\\pip.exe install -r requirements.txt"}
-
-// Step 4: Run app using venv's python directly
-{"action": "execute", "command": ".\\venv\\Scripts\\python.exe app.py"}
-```
-
-**KEY INSIGHT**: You don't always need to "activate" the venv. Just use the venv's python/pip directly:
-- `venv\\Scripts\\python.exe` instead of `python`
-- `venv\\Scripts\\pip.exe` instead of `pip`
-
-# Rules (MANDATORY - NO EXCEPTIONS)
-
-1. **🔥 ONE COMMAND PER ACTION (CRITICAL)**:
-   - Execute ONLY ONE atomic command per action
-   - Do NOT chain commands with `&&`, `||`, or multiple `;`
-   - If you need to run multiple commands, break them into separate actions
-   - Example: Instead of `cd dir && python -m venv venv`, do:
-     * Action 1: `cd dir`
-     * Action 2: `python -m venv venv`
-
-2. **PowerShell Syntax (NOT bash/Linux)**:
-   - Use PowerShell commands, NOT bash equivalents
-   - Use `$env:USERPROFILE` instead of `~` for home directory
-   - Use backslashes `\\` or forward slashes `/` for paths
-   - NEVER use `&&` or `||` operators (they don't work in PowerShell 5.x)
-
-3. **Virtual Environment Handling**:
-   - If venv activation fails, use direct paths: `venv\\Scripts\\python.exe`
-   - Set execution policy before running .ps1 scripts
-   - Verify venv creation by checking `venv\\Scripts` directory exists
-
-4. **Chain of Thought Reasoning**:
-   - Apply CoT reasoning before EVERY action
-   - Include observation, analysis, alternatives, decision, verification, fallback
-
-5. **Iteration Limits**:
-   - Maximum {max_iterations} iterations for this step (current: {current_iteration})
-   - If approaching limit and not making progress, ask user for help
-
-6. **Error Handling**:
-   - If a command fails, use Error Analysis CoT framework
-   - Don't retry the same failed command without changing approach
-   - Analyze root cause before attempting fix
-
-7. **Success Verification**:
-   - Declare step_done ONLY when success criteria is fully met
-   - Verify outputs match expected results
-   - Don't assume success from exit code alone
-
-8. **Asking for Help**:
-   - If stuck after 3 failed attempts with different approaches, use ask_user
-   - Provide clear context about what you've tried and why it's not working
+# Rules
+1. Use PowerShell syntax, NOT bash/Linux commands
+2. Use `$env:USERPROFILE` instead of `~` for home directory
+3. **CRITICAL: Apply Chain of Thought reasoning before EVERY action**
+4. Maximum {max_iterations} iterations (current: {current_iteration})
+5. If a command fails, use Error Analysis CoT (see below)
+6. Declare step_done as soon as the success criteria is met
+7. If stuck after multiple failures, use ask_user to explain the situation
+8. **CRITICAL: Working Directory Persistence**
+   - Each command runs in a SEPARATE process
+   - `cd` or `Set-Location` effects do NOT persist to the next command
+   - ALWAYS chain directory change with your command using `;` (semicolon):
+     ✅ `Set-Location C:\\path\\to\\project; .\\venv\\Scripts\\Activate.ps1`
+     ✅ `Set-Location C:\\path\\to\\project; pip install -r requirements.txt`
+     ❌ Do NOT run `cd` as a separate command - it will have no effect!
+   - `&&` does NOT work in PowerShell 5.1, use `;` instead
 
 {ERROR_ANALYSIS_COT}
 

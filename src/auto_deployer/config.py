@@ -15,6 +15,43 @@ load_dotenv()
 
 _DEFAULT_CONFIG_PATH = Path("config/default_config.json")
 
+# Provider default configurations
+# 提供商默认配置：当用户未指定 model 或 endpoint 时使用
+PROVIDER_DEFAULTS = {
+    "gemini": {
+        "model": "gemini-2.5-flash",
+        "endpoint": None  #自动生成 endpoint
+    },
+    "openai": {
+        "model": "gpt-4o",
+        "endpoint": "https://api.openai.com/v1"
+    },
+    "anthropic": {
+        "model": "claude-3-5-sonnet-20241022",
+        "endpoint": "https://api.anthropic.com/v1"
+    },
+    "claude": {  
+        "model": "claude-3-5-sonnet-20241022",
+        "endpoint": "https://api.anthropic.com/v1"
+    },
+    "deepseek": {
+        "model": "deepseek-chat",
+        "endpoint": "https://api.deepseek.com/v1"
+    },
+    "openrouter": {
+        "model": "anthropic/claude-3.5-sonnet",
+        "endpoint": "https://openrouter.ai/api/v1"
+    },
+    "openai-compatible": {
+        "model": None,  # 依赖用户配置
+        "endpoint": None  # 必须由用户指定
+    },
+    "custom": {  # openai-compatible 的别名
+        "model": None,
+        "endpoint": None
+    }
+}
+
 
 @dataclass
 class LLMConfig:
@@ -138,6 +175,21 @@ def load_config(path: Optional[str] = None) -> AppConfig:
             if env_key_path:
                 config.deployment.default_key_path = env_key_path
                 config.deployment.default_auth_method = "key"
+            
+            # Apply provider defaults for missing model/endpoint
+            # 如果用户未指定 model 或 endpoint，使用提供商默认值
+            provider_key = config.llm.provider.lower()
+            if provider_key in PROVIDER_DEFAULTS:
+                defaults = PROVIDER_DEFAULTS[provider_key]
+                
+                # 填充 model（如果未指定或为默认值）
+                if not config.llm.model or config.llm.model == "planning-v0":
+                    if defaults["model"]:
+                        config.llm.model = defaults["model"]
+                
+                # 填充 endpoint（如果未指定）
+                if not config.llm.endpoint:
+                    config.llm.endpoint = defaults["endpoint"]
             
             return config
 

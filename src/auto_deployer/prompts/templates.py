@@ -143,42 +143,85 @@ No additional isolation steps needed with Docker.
 """
 
 ENVIRONMENT_ISOLATION_PYTHON_WINDOWS = """
+## ⚠️ CRITICAL: Working Directory & Command Chaining (Windows)
+
+**IMPORTANT**: Each command runs in a SEPARATE process. Directory changes (`cd`, `Set-Location`) 
+do NOT persist between commands!
+
+**Solution**: Use semicolon (`;`) to chain commands that depend on the same working directory:
+
+✅ CORRECT:
+```powershell
+Set-Location C:\\path\\to\\project; .\\venv\\Scripts\\Activate.ps1
+Set-Location C:\\path\\to\\project; pip install -r requirements.txt
+```
+
+❌ WRONG (will fail - cd effect lost between separate commands):
+```powershell
+# Command 1:
+Set-Location C:\\path\\to\\project
+# Command 2 runs in NEW process, starts from ORIGINAL directory, NOT C:\\path\\to\\project!
+.\\venv\\Scripts\\Activate.ps1  # FAILS: venv not found
+```
+
+**PowerShell command chaining**:
+- Use `;` (semicolon) to chain multiple commands
+- `&&` does NOT work in Windows PowerShell 5.1 (only PowerShell 7+)
+
+---
+
 ## Python Projects on Windows (MANDATORY Virtual Environment)
+
+⚠️ **IMPORTANT: venv directory structure varies by Python installation**:
+- Standard Windows Python: uses `venv\\Scripts\\` (e.g., `venv\\Scripts\\python.exe`)
+- MSYS2/MinGW/Git Bash Python: uses `venv\\bin\\` (e.g., `venv\\bin\\python.exe`)
+
+**Always check which exists first**, or try both paths!
 
 1. **Create virtual environment**:
    ```powershell
-   python -m venv venv
+   Set-Location C:\\path\\to\\project; python -m venv venv
    ```
 
-2. **Activate virtual environment**:
+2. **Activate virtual environment** (try Scripts first, then bin):
    ```powershell
-   .\venv\Scripts\Activate.ps1
+   # Standard Windows Python:
+   .\\venv\\Scripts\\Activate.ps1
+   # OR for MSYS2/MinGW Python:
+   .\\venv\\bin\\Activate.ps1
+   
    # If execution policy blocks it:
    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-   .\venv\Scripts\Activate.ps1
    ```
 
 3. **Verify activation**:
    ```powershell
    Get-Command python | Select-Object Source
-   # Should show path containing \venv\Scripts\
+   # Should show path containing \\venv\\Scripts\\ OR \\venv\\bin\\
    ```
 
-4. **Install dependencies**:
+4. **Install dependencies** (use explicit path if activation fails):
    ```powershell
    pip install -r requirements.txt
+   # OR explicitly (try Scripts first, then bin):
+   .\\venv\\Scripts\\pip.exe install -r requirements.txt
+   .\\venv\\bin\\pip.exe install -r requirements.txt
    ```
 
 5. **Run application**:
    ```powershell
    python app.py
-   # or explicitly:
-   .\venv\Scripts\python.exe app.py
+   # OR explicitly:
+   .\\venv\\Scripts\\python.exe app.py
+   .\\venv\\bin\\python.exe app.py
    ```
 
 6. **For background processes**:
    ```powershell
-   Start-Process -NoNewWindow -FilePath ".\venv\Scripts\python.exe" -ArgumentList "app.py" -RedirectStandardOutput "app.log"
+   # Use whichever path exists:
+   Start-Process -NoNewWindow -FilePath ".\\venv\\Scripts\\python.exe" -ArgumentList "app.py"
+   # OR:
+   Start-Process -NoNewWindow -FilePath ".\\venv\\bin\\python.exe" -ArgumentList "app.py"
    ```
 
 **Why this matters:**
@@ -187,6 +230,16 @@ ENVIRONMENT_ISOLATION_PYTHON_WINDOWS = """
 """
 
 ENVIRONMENT_ISOLATION_NODEJS_WINDOWS = """
+## ⚠️ CRITICAL: Working Directory Reminder
+
+Each command runs in a SEPARATE process. Always chain `cd` with your command using `;`:
+```powershell
+Set-Location C:\\path\\to\\project; npm install
+Set-Location C:\\path\\to\\project; npm start
+```
+
+---
+
 ## Node.js Projects on Windows (MANDATORY Local Dependencies)
 
 1. **NEVER use `npm install -g`** (global install pollutes system)

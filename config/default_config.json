@@ -1,12 +1,13 @@
 {
   "llm": {
     "provider": "deepseek",
-    "model": "deepseek-chat",
+    "model": null,
     "api_key": null,
-    "endpoint": "https://api.deepseek.com/v1",
+    "endpoint": null,
     "temperature": 0.0,
     "proxy": null
   },
+  "_comment": "model 和 endpoint 留空时会根据 provider 自动填充默认值。如需自定义，可手动设置这些字段。",
   "_llm_providers": {
     "_comment": "Supported providers and their recommended models",
     "gemini": {

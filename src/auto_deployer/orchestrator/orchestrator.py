@@ -7,12 +7,13 @@ import logging
 import platform
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Union, List, TYPE_CHECKING
+from typing import Optional, Union, List, Dict, TYPE_CHECKING
 
 from .models import (
-    StepContext, StepResult, StepStatus, DeployContext
+    StepContext, StepResult, StepStatus, DeployContext, StepOutputs, ExecutionSummary
 )
 from .step_executor import StepExecutor
+from .summary_manager import SummaryManager
 
 if TYPE_CHECKING:
     from ..llm.agent import DeploymentPlan, DeploymentStep
@@ -56,6 +57,9 @@ class DeploymentOrchestrator:
             is_windows=is_windows,
         )
         
+        # 摘要管理器（在 run() 中初始化）
+        self.summary_manager: Optional[SummaryManager] = None
+        
         # 日志
         self.deployment_log: dict = {}
         self.current_log_file: Optional[Path] = None
@@ -77,6 +81,14 @@ class DeploymentOrchestrator:
         """
         # 初始化日志
         self._init_log(deploy_ctx, plan)
+        
+        # 初始化摘要管理器
+        project_name = deploy_ctx.repo_url.rstrip("/").split("/")[-1].replace(".git", "")
+        self.summary_manager = SummaryManager(
+            project_name=project_name,
+            deploy_dir=deploy_ctx.deploy_dir,
+            strategy=plan.strategy,
+        )
         
         logger.info("")
         logger.info("=" * 60)
@@ -100,9 +112,12 @@ class DeploymentOrchestrator:
         self.deployment_log["plan"] = plan.to_dict()
         self._save_log()
         
+        # 收集已完成步骤的结构化产出（用于传递给后续步骤）
+        completed_outputs: Dict[int, StepOutputs] = {}
+        
         # 按顺序执行每个步骤
         for i, step in enumerate(plan.steps):
-            step_ctx = self._create_step_context(step)
+            step_ctx = self._create_step_context(step, completed_outputs)
             
             logger.info(f"📍 Step {i + 1}/{len(plan.steps)}: {step.name}")
             logger.info(f"   Category: {step.category}")
@@ -131,7 +146,7 @@ class DeploymentOrchestrator:
                 if user_choice == "retry":
                     logger.info(f"   🔄 Retrying step...")
                     # 重置并重试
-                    step_ctx = self._create_step_context(step)
+                    step_ctx = self._create_step_context(step, completed_outputs)
                     result = self.step_executor.execute(step_ctx, deploy_ctx)
                     deploy_ctx.step_results[step.id] = result
                     self._log_step_result(step, step_ctx, result)
@@ -152,7 +167,17 @@ class DeploymentOrchestrator:
                     self._finalize_log("aborted")
                     return False
             
-            # 传递输出到共享上下文
+            # 合并结构化产出到摘要
+            if result.structured_outputs:
+                self.summary_manager.merge_step_outputs(
+                    step_name=step.name,
+                    step_category=step.category,
+                    outputs=result.structured_outputs,
+                )
+                completed_outputs[step.id] = result.structured_outputs
+                logger.debug(f"   📦 Merged outputs to summary: {result.structured_outputs.summary}")
+            
+            # 传递输出到共享上下文（保持向后兼容）
             if result.outputs:
                 deploy_ctx.shared_data.update(result.outputs)
                 logger.debug(f"   Outputs: {result.outputs}")
@@ -164,17 +189,47 @@ class DeploymentOrchestrator:
         logger.info("🎉 Deployment completed successfully!")
         logger.info("=" * 60)
         
+        # 记录最终摘要
+        if self.summary_manager:
+            self.deployment_log["execution_summary"] = self.summary_manager.get_summary().to_dict()
+        
         self._finalize_log("success")
         return True
     
-    def _create_step_context(self, step: "DeploymentStep") -> StepContext:
-        """创建步骤上下文"""
+    def _create_step_context(
+        self, 
+        step: "DeploymentStep",
+        completed_outputs: Optional[Dict[int, StepOutputs]] = None,
+    ) -> StepContext:
+        """创建步骤上下文
+        
+        Args:
+            step: 部署步骤
+            completed_outputs: 已完成步骤的结构化产出
+            
+        Returns:
+            StepContext 步骤上下文
+        """
+        # 获取前置步骤的产出（只传递直接依赖的步骤产出）
+        predecessor_outputs: Dict[int, StepOutputs] = {}
+        if completed_outputs and step.depends_on:
+            for dep_id in step.depends_on:
+                if dep_id in completed_outputs:
+                    predecessor_outputs[dep_id] = completed_outputs[dep_id]
+        
+        # 获取执行摘要
+        execution_summary = None
+        if self.summary_manager:
+            execution_summary = self.summary_manager.get_summary()
+        
         return StepContext(
             step_id=step.id,
             step_name=step.name,
             goal=step.description or step.name,
             success_criteria=step.success_criteria or f"Complete: {step.name}",
             category=step.category,
+            execution_summary=execution_summary,
+            predecessor_outputs=predecessor_outputs,
         )
     
     def _check_dependencies(
@@ -256,6 +311,11 @@ class DeploymentOrchestrator:
         result: StepResult,
     ) -> None:
         """记录步骤执行结果"""
+        # 结构化产出
+        structured_outputs_dict = None
+        if result.structured_outputs:
+            structured_outputs_dict = result.structured_outputs.to_dict()
+        
         step_log = {
             "step_id": step.id,
             "step_name": step.name,
@@ -277,6 +337,7 @@ class DeploymentOrchestrator:
             ],
             "user_interactions": step_ctx.user_interactions,
             "outputs": result.outputs,
+            "structured_outputs": structured_outputs_dict,  # 新增：结构化产出
             "error": result.error,
             "timestamp": datetime.now().isoformat(),
         }
