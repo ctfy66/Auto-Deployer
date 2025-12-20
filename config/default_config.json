@@ -21,7 +21,11 @@
       "endpoint": "https://api.openai.com/v1"
     },
     "anthropic": {
-      "models": ["claude-3-5-sonnet-20241022", "claude-3-opus-20240229", "claude-3-haiku-20240307"],
+      "models": [
+        "claude-3-5-sonnet-20241022",
+        "claude-3-opus-20240229",
+        "claude-3-haiku-20240307"
+      ],
       "env_key": "AUTO_DEPLOYER_ANTHROPIC_API_KEY",
       "endpoint": "https://api.anthropic.com/v1"
     },
@@ -31,7 +35,11 @@
       "endpoint": "https://api.deepseek.com/v1"
     },
     "openrouter": {
-      "models": ["anthropic/claude-3.5-sonnet", "openai/gpt-4o", "google/gemini-2.0-flash-exp"],
+      "models": [
+        "anthropic/claude-3.5-sonnet",
+        "openai/gpt-4o",
+        "google/gemini-2.0-flash-exp"
+      ],
       "env_key": "AUTO_DEPLOYER_OPENROUTER_API_KEY",
       "endpoint": "https://openrouter.ai/api/v1",
       "note": "OpenRouter provides access to multiple models"

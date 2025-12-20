@@ -6,7 +6,7 @@ import json
 import logging
 import platform
 from datetime import datetime
-from typing import Optional, Union, TYPE_CHECKING
+from typing import Optional, Union, TYPE_CHECKING, Callable
 
 from .models import (
     StepContext, StepResult, StepAction, ActionType,
@@ -39,12 +39,14 @@ class StepExecutor:
         interaction_handler: "UserInteractionHandler",
         max_iterations_per_step: int = 10,
         is_windows: bool = False,
+        on_command_executed: Optional[Callable[[], None]] = None,
     ):
         self.llm_config = llm_config
         self.session = session
         self.interaction_handler = interaction_handler
         self.max_iterations = max_iterations_per_step
         self.is_windows = is_windows
+        self.on_command_executed = on_command_executed
         
         # Initialize LLM provider using factory
         from ..llm.base import create_llm_provider
@@ -95,6 +97,10 @@ class StepExecutor:
                 
                 record = self._execute_command(command, action.reasoning)
                 step_ctx.commands.append(record)
+                
+                # 立即保存日志
+                if self.on_command_executed:
+                    self.on_command_executed()
                 
                 status = "✓" if record.success else "✗"
                 logger.info(f"      {status} Exit code: {record.exit_code}")

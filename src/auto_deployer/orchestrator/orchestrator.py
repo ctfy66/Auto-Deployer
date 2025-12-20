@@ -55,6 +55,7 @@ class DeploymentOrchestrator:
             interaction_handler=interaction_handler,
             max_iterations_per_step=max_iterations_per_step,
             is_windows=is_windows,
+            on_command_executed=lambda: self._save_log(),
         )
         
         # 摘要管理器（在 run() 中初始化）
@@ -131,6 +132,25 @@ class DeploymentOrchestrator:
                 self._log_step_result(step, step_ctx, result)
                 logger.info("")
                 continue
+            
+            # 创建步骤日志条目（先标记为 running）
+            step_log = {
+                "step_id": step.id,
+                "step_name": step.name,
+                "category": step.category,
+                "status": "running",
+                "iterations": 0,
+                "compressed": False,
+                "compressed_history": None,
+                "commands": [],
+                "user_interactions": [],
+                "outputs": {},
+                "structured_outputs": None,
+                "error": None,
+                "timestamp": datetime.now().isoformat(),
+            }
+            self.deployment_log["steps"].append(step_log)
+            self._save_log()
             
             # 执行步骤
             result = self.step_executor.execute(step_ctx, deploy_ctx)
@@ -310,38 +330,57 @@ class DeploymentOrchestrator:
         step_ctx: StepContext,
         result: StepResult,
     ) -> None:
-        """记录步骤执行结果"""
-        # 结构化产出
+        """更新步骤日志结果（更新最后一个步骤条目）"""
+        # 获取最后一个步骤条目（应该已经在 run() 中创建）
+        if not self.deployment_log["steps"]:
+            # 如果没有条目，创建一个（兼容性处理）
+            step_log = {
+                "step_id": step.id,
+                "step_name": step.name,
+                "category": step.category,
+            }
+            self.deployment_log["steps"].append(step_log)
+        
+        step_log = self.deployment_log["steps"][-1]
+        
+        # 更新状态和结果
+        step_log["status"] = result.status.value
+        step_log["iterations"] = step_ctx.iteration
+        step_log["compressed"] = step_ctx.compressed_history is not None
+        step_log["compressed_history"] = step_ctx.compressed_history if step_ctx.compressed_history else None
+        
+        # 更新命令历史
+        commands_log = []
+        for cmd in step_ctx.commands:
+            commands_log.append({
+                "command": cmd.command,
+                "success": cmd.success,
+                "exit_code": cmd.exit_code,
+                "stdout": cmd.stdout[:1000] if cmd.stdout and len(cmd.stdout) > 1000 else cmd.stdout,
+                "stderr": cmd.stderr[:500] if cmd.stderr and len(cmd.stderr) > 500 else cmd.stderr,
+                "timestamp": cmd.timestamp,
+            })
+        step_log["commands"] = commands_log
+        
+        # 更新用户交互
+        step_log["user_interactions"] = step_ctx.user_interactions
+        
+        # 更新输出
+        step_log["outputs"] = result.outputs or {}
+        
+        # 更新结构化输出
         structured_outputs_dict = None
         if result.structured_outputs:
             structured_outputs_dict = result.structured_outputs.to_dict()
+        step_log["structured_outputs"] = structured_outputs_dict
         
-        step_log = {
-            "step_id": step.id,
-            "step_name": step.name,
-            "category": step.category,
-            "status": result.status.value,
-            "iterations": step_ctx.iteration,
-            "compressed": step_ctx.compressed_history is not None,
-            "compressed_history": step_ctx.compressed_history if step_ctx.compressed_history else None,
-            "commands": [
-                {
-                    "command": c.command,
-                    "success": c.success,
-                    "exit_code": c.exit_code,
-                    "stdout": c.stdout[:1000] if c.stdout and len(c.stdout) > 1000 else c.stdout,
-                    "stderr": c.stderr[:500] if c.stderr and len(c.stderr) > 500 else c.stderr,
-                    "timestamp": c.timestamp,
-                }
-                for c in step_ctx.commands
-            ],
-            "user_interactions": step_ctx.user_interactions,
-            "outputs": result.outputs,
-            "structured_outputs": structured_outputs_dict,  # 新增：结构化产出
-            "error": result.error,
-            "timestamp": datetime.now().isoformat(),
-        }
-        self.deployment_log["steps"].append(step_log)
+        # 更新错误
+        step_log["error"] = result.error
+        
+        # 更新时间戳（完成时间）
+        step_log["timestamp"] = datetime.now().isoformat()
+        
+        # 保存日志
         self._save_log()
     
     def _finalize_log(self, status: str) -> None:
