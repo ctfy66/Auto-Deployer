@@ -55,7 +55,7 @@ class DeploymentOrchestrator:
             interaction_handler=interaction_handler,
             max_iterations_per_step=max_iterations_per_step,
             is_windows=is_windows,
-            on_command_executed=lambda: self._save_log(),
+            on_command_executed=lambda: self._sync_and_save_log(),
         )
         
         # 摘要管理器（在 run() 中初始化）
@@ -64,6 +64,7 @@ class DeploymentOrchestrator:
         # 日志
         self.deployment_log: dict = {}
         self.current_log_file: Optional[Path] = None
+        self.current_step_ctx: Optional[StepContext] = None  # 追踪当前执行的步骤上下文，用于实时日志同步
     
     def run(
         self,
@@ -152,8 +153,14 @@ class DeploymentOrchestrator:
             self.deployment_log["steps"].append(step_log)
             self._save_log()
             
+            # 设置当前步骤上下文，用于实时日志同步
+            self.current_step_ctx = step_ctx
+            
             # 执行步骤
             result = self.step_executor.execute(step_ctx, deploy_ctx)
+            
+            # 清除当前步骤上下文
+            self.current_step_ctx = None
             
             # 记录结果
             deploy_ctx.step_results[step.id] = result
@@ -167,7 +174,12 @@ class DeploymentOrchestrator:
                     logger.info(f"   🔄 Retrying step...")
                     # 重置并重试
                     step_ctx = self._create_step_context(step, completed_outputs)
+                    
+                    # 设置当前步骤上下文
+                    self.current_step_ctx = step_ctx
                     result = self.step_executor.execute(step_ctx, deploy_ctx)
+                    self.current_step_ctx = None
+                    
                     deploy_ctx.step_results[step.id] = result
                     self._log_step_result(step, step_ctx, result)
                     
@@ -422,6 +434,46 @@ class DeploymentOrchestrator:
             return (end - start).total_seconds()
         except Exception:
             return 0.0
+    
+    def _sync_and_save_log(self) -> None:
+        """同步当前步骤的命令历史到日志，然后保存"""
+        if not self.current_step_ctx or not self.deployment_log.get("steps"):
+            # 如果没有当前步骤或日志未初始化，直接保存
+            self._save_log()
+            return
+        
+        # 获取当前步骤的日志条目（最后一个）
+        step_log = self.deployment_log["steps"][-1]
+        
+        # 实时同步命令列表（从 step_ctx 到日志）
+        commands_log = []
+        for cmd in self.current_step_ctx.commands:
+            commands_log.append({
+                "command": cmd.command,
+                "success": cmd.success,
+                "exit_code": cmd.exit_code,
+                "stdout": cmd.stdout[:1000] if cmd.stdout and len(cmd.stdout) > 1000 else cmd.stdout,
+                "stderr": cmd.stderr[:500] if cmd.stderr and len(cmd.stderr) > 500 else cmd.stderr,
+                "timestamp": cmd.timestamp,
+            })
+        step_log["commands"] = commands_log
+        
+        # 同步迭代计数和压缩状态
+        step_log["iterations"] = self.current_step_ctx.iteration
+        step_log["compressed"] = self.current_step_ctx.compressed_history is not None
+        step_log["compressed_history"] = self.current_step_ctx.compressed_history
+        
+        # 同步压缩事件
+        compression_events_log = []
+        for event in self.current_step_ctx.compression_events:
+            compression_events_log.append(event.to_dict())
+        step_log["compression_events"] = compression_events_log
+        
+        # 同步用户交互
+        step_log["user_interactions"] = self.current_step_ctx.user_interactions
+        
+        # 保存到文件
+        self._save_log()
     
     def _save_log(self) -> None:
         """保存日志到文件"""
