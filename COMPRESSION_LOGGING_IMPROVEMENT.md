@@ -3,9 +3,11 @@
 ## 改进内容
 
 ### 问题描述
+
 原有的压缩日志记录只在步骤级别显示布尔标志 `compressed: true/false` 和最终的 `compressed_history` 文本，缺少以下信息：
+
 - 压缩触发的具体时机（第几次迭代）
-- 压缩的详细统计信息（命令数、token数、压缩比）
+- 压缩的详细统计信息（命令数、token 数、压缩比）
 - 多次压缩的完整历史轨迹
 
 ### 解决方案
@@ -17,6 +19,7 @@
 ### 1. 数据模型层 (`src/auto_deployer/orchestrator/models.py`)
 
 **新增 `CompressionEvent` 数据类**
+
 ```python
 @dataclass
 class CompressionEvent:
@@ -34,6 +37,7 @@ class CompressionEvent:
 ```
 
 **修改 `StepContext` 类**
+
 ```python
 # 新增字段
 compression_events: List[CompressionEvent] = field(default_factory=list)
@@ -42,12 +46,14 @@ compression_events: List[CompressionEvent] = field(default_factory=list)
 ### 2. 步骤执行层 (`src/auto_deployer/orchestrator/step_executor.py`)
 
 **增强 `_compress_step_history` 方法**
-- 在压缩前后计算token数量
+
+- 在压缩前后计算 token 数量
 - 创建 `CompressionEvent` 对象记录详细信息
 - 添加到 `step_ctx.compression_events` 列表
 - 输出更详细的日志信息
 
 **优化日志输出**
+
 ```
 ✓ History compressed at iteration 8:
    Commands: 15 total → 10 compressed + 5 kept
@@ -58,6 +64,7 @@ compression_events: List[CompressionEvent] = field(default_factory=list)
 ### 3. 日志记录层 (`src/auto_deployer/orchestrator/orchestrator.py`)
 
 **修改 `_log_step_result` 方法**
+
 ```python
 # 添加压缩事件记录
 compression_events_log = []
@@ -69,6 +76,7 @@ step_log["compression_events"] = compression_events_log
 ## 日志格式示例
 
 ### 单次压缩
+
 ```json
 {
   "step_id": 4,
@@ -94,6 +102,7 @@ step_log["compression_events"] = compression_events_log
 ```
 
 ### 多次压缩
+
 ```json
 {
   "compression_events": [
@@ -124,13 +133,14 @@ step_log["compression_events"] = compression_events_log
 ## 改进效果
 
 1. **完整的压缩轨迹**：可以看到每次压缩的具体时机和效果
-2. **详细的统计信息**：命令数、token数、压缩比一目了然
+2. **详细的统计信息**：命令数、token 数、压缩比一目了然
 3. **多次压缩支持**：如果一个步骤中多次触发压缩，都会被记录
 4. **便于分析调试**：可以分析压缩效果，优化压缩策略
 
 ## 测试验证
 
 运行 `test_compression_events.py` 测试所有功能：
+
 - ✅ CompressionEvent 数据类创建和序列化
 - ✅ StepContext.compression_events 列表管理
 - ✅ JSON 序列化和反序列化
