@@ -16,6 +16,7 @@ def build_planning_prompt(
     repo_analysis: str,
     target_info: str,
     host_details: str,
+    is_windows: bool = False,
 ) -> str:
     """Build the deployment planning prompt.
 
@@ -27,6 +28,7 @@ def build_planning_prompt(
         repo_analysis: Pre-analyzed repository context (formatted)
         target_info: Target environment summary (e.g., "Local machine (Windows)" or "user@host:port")
         host_details: Detailed host information (OS, tools, architecture, etc.)
+        is_windows: Whether target system is Windows (affects command syntax)
 
     Returns:
         Formatted planning prompt ready to send to LLM
@@ -45,6 +47,24 @@ Analyze the repository deeply and create a structured deployment plan using Chai
 
 # Repository Analysis
 {repo_analysis}
+
+# Platform-Specific Command Guidelines
+
+{"## Windows Platform (PowerShell)" if is_windows else "## Linux/Unix Platform (Bash)"}
+{"- Shell: PowerShell" if is_windows else "- Shell: Bash"}
+{"- Command chaining: Use semicolon (;) not &&" if is_windows else "- Command chaining: Use && for sequential commands"}
+{"  Example: cd mydir ; npm install" if is_windows else "  Example: cd mydir && npm install"}
+{"- Environment variables: Use $env:VAR not $VAR" if is_windows else "- Environment variables: Use $VAR or ${VAR}"}
+{"  Example: $env:NODE_ENV = 'production'" if is_windows else "  Example: export NODE_ENV=production"}
+{"- Path separators: Use backslash \\ or forward slash /" if is_windows else "- Path separators: Use forward slash /"}
+{"  Example: C:\\projects\\app or C:/projects/app" if is_windows else "  Example: /home/user/app"}
+{"- Service management: Use sc.exe, net start/stop, or Windows Services" if is_windows else "- Service management: Use systemctl (if systemd) or service/init.d"}
+{"  NOT systemd commands" if is_windows else "  Example: systemctl start myapp"}
+{"- Package managers: Chocolatey (choco), Scoop, or winget" if is_windows else "- Package managers: apt, yum, dnf, pacman, etc."}
+{"- Process management: Use Start-Process, Get-Process, Stop-Process" if is_windows else "- Process management: Use ps, kill, pkill"}
+{"  Example: Get-Process node" if is_windows else "  Example: ps aux | grep node"}
+{"- Background processes: Use Start-Job or & operator" if is_windows else "- Background processes: Use & or nohup"}
+{"  Example: Start-Process npm -ArgumentList 'start' -NoNewWindow" if is_windows else "  Example: nohup npm start &"}
 
 {PLANNING_PHASE_GUIDE}
 

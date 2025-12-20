@@ -209,7 +209,7 @@ class StepExecutor:
         
         # 检查token使用量，如果达到阈值则触发压缩
         if self.token_manager.should_compress(prompt, threshold=0.5):
-            logger.info("   🔄 Token threshold reached, compressing command history...")
+            logger.info(f"   🔄 Token threshold reached at iteration {step_ctx.iteration}, compressing command history...")
             step_ctx = self._compress_step_history(step_ctx)
             
             # 重新构建prompt
@@ -366,6 +366,9 @@ class StepExecutor:
         
         保留最近30%的命令，压缩较远的70%
         """
+        from datetime import datetime
+        from .models import CompressionEvent
+        
         total_commands = len(step_ctx.commands)
         if total_commands < 10:
             # 命令太少不压缩
@@ -379,6 +382,15 @@ class StepExecutor:
         
         logger.debug(f"   Compressing {len(old_commands)} commands, keeping {len(recent_commands)} recent")
         
+        # 计算压缩前的token数量
+        token_count_before = None
+        try:
+            # 构建完整的命令历史文本用于token计数
+            full_history = self._format_commands(step_ctx)
+            token_count_before = self.token_manager.count_tokens(full_history)
+        except Exception as e:
+            logger.debug(f"   Failed to count tokens before compression: {e}")
+        
         # 调用LLM压缩
         try:
             compressed_text = self.history_compressor.compress(
@@ -391,7 +403,46 @@ class StepExecutor:
             step_ctx.compressed_history = compressed_text
             step_ctx.commands = recent_commands
             
-            logger.info(f"   ✓ History compressed: {len(old_commands)} commands → {len(compressed_text)} chars")
+            # 计算压缩后的token数量
+            token_count_after = None
+            compression_ratio = 0.0
+            try:
+                new_history = self._format_commands(step_ctx)
+                token_count_after = self.token_manager.count_tokens(new_history)
+                
+                if token_count_before and token_count_after:
+                    compression_ratio = ((token_count_before - token_count_after) / token_count_before) * 100
+            except Exception as e:
+                logger.debug(f"   Failed to count tokens after compression: {e}")
+            
+            # 获取token限制用于触发原因
+            token_limit = self.token_manager.get_limit()
+            trigger_reason = f"Token threshold 50% reached ({token_count_before}/{token_limit} tokens)" if token_count_before else "Token threshold reached"
+            
+            # 创建压缩事件记录
+            compression_event = CompressionEvent(
+                iteration=step_ctx.iteration,
+                commands_before=total_commands,
+                commands_compressed=len(old_commands),
+                commands_kept=len(recent_commands),
+                compressed_text_length=len(compressed_text),
+                token_count_before=token_count_before,
+                token_count_after=token_count_after,
+                compression_ratio=compression_ratio,
+                timestamp=datetime.now().isoformat(),
+                trigger_reason=trigger_reason,
+            )
+            
+            # 添加到压缩事件列表
+            step_ctx.compression_events.append(compression_event)
+            
+            # 输出详细的压缩日志
+            logger.info(f"   ✓ History compressed at iteration {step_ctx.iteration}:")
+            logger.info(f"      Commands: {total_commands} total → {len(old_commands)} compressed + {len(recent_commands)} kept")
+            if token_count_before and token_count_after:
+                logger.info(f"      Tokens: {token_count_before} → {token_count_after} ({compression_ratio:.1f}% saved)")
+            logger.info(f"      Compressed text: {len(compressed_text)} chars")
+            
         except Exception as e:
             logger.error(f"   ✗ Compression failed: {e}, keeping all commands")
         

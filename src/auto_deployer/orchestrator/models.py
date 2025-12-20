@@ -168,7 +168,65 @@ class ExecutionSummary:
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
-        return asdict(self)
+        return {
+            "project_name": self.project_name,
+            "deploy_dir": self.deploy_dir,
+            "strategy": self.strategy,
+            "environment": self.environment,
+            "completed_actions": self.completed_actions,
+            "configurations": self.configurations,
+            "resolved_issues": self.resolved_issues,
+            "last_updated": self.last_updated,
+        }
+
+
+@dataclass
+class CompressionEvent:
+    """压缩事件记录
+    
+    记录每次历史压缩的详细信息，用于日志分析和调试
+    """
+    iteration: int                          # 触发压缩时的迭代次数
+    commands_before: int                    # 压缩前的命令总数
+    commands_compressed: int                # 被压缩的命令数
+    commands_kept: int                      # 保留的最近命令数
+    compressed_text_length: int             # 压缩后文本的字符长度
+    token_count_before: Optional[int] = None  # 压缩前的token估算
+    token_count_after: Optional[int] = None   # 压缩后的token估算
+    compression_ratio: float = 0.0          # 压缩比率（节省的百分比）
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    trigger_reason: str = ""                # 触发原因
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典用于JSON序列化"""
+        return {
+            "iteration": self.iteration,
+            "commands_before": self.commands_before,
+            "commands_compressed": self.commands_compressed,
+            "commands_kept": self.commands_kept,
+            "compressed_text_length": self.compressed_text_length,
+            "token_count_before": self.token_count_before,
+            "token_count_after": self.token_count_after,
+            "compression_ratio": self.compression_ratio,
+            "timestamp": self.timestamp,
+            "trigger_reason": self.trigger_reason,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "CompressionEvent":
+        """从字典创建对象"""
+        return cls(
+            iteration=data.get("iteration", 0),
+            commands_before=data.get("commands_before", 0),
+            commands_compressed=data.get("commands_compressed", 0),
+            commands_kept=data.get("commands_kept", 0),
+            compressed_text_length=data.get("compressed_text_length", 0),
+            token_count_before=data.get("token_count_before"),
+            token_count_after=data.get("token_count_after"),
+            compression_ratio=data.get("compression_ratio", 0.0),
+            timestamp=data.get("timestamp", ""),
+            trigger_reason=data.get("trigger_reason", ""),
+        )
 
 
 @dataclass
@@ -202,6 +260,9 @@ class StepContext:
     
     # 压缩后的历史记录（当token达到阈值时触发）
     compressed_history: Optional[str] = None
+    
+    # 压缩事件记录列表（记录每次压缩的详细信息）
+    compression_events: List[CompressionEvent] = field(default_factory=list)
     
     # 输出（传递给下游步骤）- 保留旧字段兼容性
     outputs: Dict[str, Any] = field(default_factory=dict)

@@ -131,10 +131,38 @@ class DeploymentPlanner:
         
         
         # Build planning prompt
-        from ..prompts.planning import build_planning_prompt
+        from ..prompts.planning import build_planning_prompt, build_host_details_local, build_host_details_remote
 
         # Extract host details for the prompt
         target_info = "Local machine" if is_local else f"{host_info.get('user', 'unknown')}@{host_info.get('host', 'unknown')}"
+        
+        # 判断目标系统类型
+        os_name = host_info.get('os_name', '')
+        is_windows = os_name.lower() == 'windows'
+        
+        # 构建格式化的主机详情
+        if is_local:
+            # 本地部署 - 使用 build_host_details_local
+            host_details = build_host_details_local(
+                os_name=host_info.get('os_name', 'Unknown'),
+                os_release=host_info.get('os_release', 'Unknown'),
+                architecture=host_info.get('architecture', 'Unknown'),
+                kernel=host_info.get('kernel', 'Unknown'),
+                is_container=host_info.get('is_container', False),
+                has_systemd=host_info.get('has_systemd', False),
+                available_tools=host_info.get('available_tools', {}),
+            )
+        else:
+            # 远程部署 - 使用 build_host_details_remote
+            ssh_target = f"{host_info.get('user', 'unknown')}@{host_info.get('host', 'unknown')}:{host_info.get('port', 22)}"
+            host_details = build_host_details_remote(
+                ssh_target=ssh_target,
+                os_release=host_info.get('os_release', 'Unknown'),
+                kernel=host_info.get('kernel', 'Unknown'),
+                architecture=host_info.get('architecture', 'Unknown'),
+                is_container=host_info.get('is_container', False),
+                has_systemd=host_info.get('has_systemd', False),
+            )
 
         prompt = build_planning_prompt(
             repo_url=repo_url,
@@ -143,7 +171,8 @@ class DeploymentPlanner:
             framework=framework or "none",
             repo_analysis=repo_analysis or "No analysis available",
             target_info=target_info,
-            host_details=f"# Host Details\n{json.dumps(host_info, indent=2, ensure_ascii=False)}"
+            host_details=host_details,
+            is_windows=is_windows,
         )
         
         # Call LLM

@@ -349,6 +349,12 @@ class DeploymentOrchestrator:
         step_log["compressed"] = step_ctx.compressed_history is not None
         step_log["compressed_history"] = step_ctx.compressed_history if step_ctx.compressed_history else None
         
+        # 添加压缩事件记录
+        compression_events_log = []
+        for event in step_ctx.compression_events:
+            compression_events_log.append(event.to_dict())
+        step_log["compression_events"] = compression_events_log
+        
         # 更新命令历史
         commands_log = []
         for cmd in step_ctx.commands:
