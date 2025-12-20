@@ -67,14 +67,12 @@ class LLMConfig:
 
 @dataclass
 class AgentConfig:
-    """Configuration for the deployment agent."""
+    """Configuration for the deployment agent and orchestrator."""
 
-    max_iterations: int = 180  # 总迭代次数（orchestrator 模式下会分配给各步骤）
-    max_iterations_per_step: int = 30  # 每个步骤的最大迭代次数（orchestrator 模式专用）
-    # 规划阶段配置
-    enable_planning: bool = True           # 是否启用规划阶段
-    require_plan_approval: bool = False    # 是否需要用户确认计划
-    planning_timeout: int = 60             # 规划超时（秒）
+    max_iterations: int = 180              # 总迭代次数（用于步骤分配）
+    max_iterations_per_step: int = 30     # 每个步骤的最大迭代次数
+    require_plan_approval: bool = False   # 是否需要用户确认计划
+    planning_timeout: int = 60            # 规划超时（秒）
     # 执行模式
     use_orchestrator: bool = True          # 使用新的 Orchestrator 模式（步骤独立执行）
 

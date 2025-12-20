@@ -5,7 +5,7 @@ where the LLM analyzes the repository and generates a structured deployment plan
 """
 
 from typing import Optional
-from .cot_framework import PLANNING_COT_TEMPLATE, get_reasoning_requirements
+from .cot_framework import PLANNING_PHASE_GUIDE, get_reasoning_requirements
 
 
 def build_planning_prompt(
@@ -46,7 +46,7 @@ Analyze the repository deeply and create a structured deployment plan using Chai
 # Repository Analysis
 {repo_analysis}
 
-{PLANNING_COT_TEMPLATE}
+{PLANNING_PHASE_GUIDE}
 
 # Task
 Create a deployment plan using the systematic reasoning process above. Think deeply about:
@@ -122,26 +122,19 @@ Output a JSON object with this exact structure:
 
 # Output Format
 
-FIRST, show your reasoning process (this helps improve the system):
+FIRST, show your reasoning process (简洁版，不要太长):
 ```
-## Project Understanding
-[Your analysis of the project type, tech stack, and requirements]
+## 项目分析
+[类型、技术栈、关键依赖]
 
-## Environment Analysis
-[Your analysis of the target environment and constraints]
+## 策略选择
+Docker-Compose: [适合/不适合 + 简短理由]
+Docker: [适合/不适合 + 简短理由]
+Traditional: [适合/不适合 + 简短理由]
+选择: [X] 因为 [核心原因]
 
-## Strategy Reasoning
-[Why you're choosing this strategy over alternatives]
-Docker-Compose: [pros/cons for this project]
-Docker: [pros/cons for this project]
-Traditional: [pros/cons for this project]
-Chosen: [X] because [reasoning]
-
-## Step Design Logic
-[How you're breaking down the deployment and why]
-
-## Risk Assessment
-[What could go wrong and how you're mitigating it]
+## 主要风险
+[3-5个关键风险点]
 ```
 
 THEN, output the JSON plan (no markdown code fence):

@@ -397,87 +397,42 @@ AVAILABLE_ACTIONS_JSON = """
 """
 
 # ============================================================================
-# Error Diagnosis Framework
+# Error Diagnosis Framework (Streamlined)
 # ============================================================================
 
 ERROR_DIAGNOSIS_FRAMEWORK = """
-# Error Diagnosis Framework (CRITICAL)
+# 🔍 错误诊断框架
 
-When a command fails, follow this systematic reasoning process:
+命令失败时的分析流程：
 
-## Step 1: Extract All Error Indicators
-Look at the FULL stderr output and identify ALL error messages:
-- Lines with "error", "failed", "cannot", "unable", "denied", "not found"
-- Exception traces and stack traces
-- Exit codes and their meanings
-- Quote the EXACT error messages
+## 1. 提取关键信息
+- Exit code 和最具体的错误消息（不是通用包装错误）
+- 提到的文件路径、服务名、端口号
+- 完整stderr，不只是第一行
 
-## Step 2: Classify Each Error
-For each error message, determine:
-- Is this a SYMPTOM (e.g., "connection refused") or ROOT CAUSE (e.g., "service not running")?
-- Specificity level: SPECIFIC (mentions exact file/service/port) vs GENERIC (vague error)
-- Category: service, network, permission, filesystem, dependency, configuration, etc.
+## 2. 识别根本原因
+错误链：通用错误 → **根本原因**（最具体的那个）
 
-## Step 3: Build the Causal Chain
-Trace the error chain from symptom to root cause:
-Example for Docker error:
-  "unable to connect" (symptom)
-  → WHY? "error during connect" (intermediate)
-  → WHY? "open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file" (specific)
-  → ROOT CAUSE: Docker Desktop service is not running
+常见模式识别：
+- "Cannot connect" + socket/pipe路径 → 服务未启动
+- "EADDRINUSE" + 端口 → 端口被占用  
+- "permission denied" + 路径 → 权限问题
+- "not found" + 命令/模块名 → 未安装
+- "execution policy" (Windows) → PowerShell策略限制
 
-## Step 4: Prioritize by Specificity
-The MOST SPECIFIC error is usually the root cause:
-- "The system cannot find the file //./pipe/dockerDesktopLinuxEngine" (SPECIFIC)
-  is more informative than
-- "Cannot connect to Docker daemon" (GENERIC)
+## 3. 平台特定检查
+**Linux**: systemctl status, /var/run/, which, sudo
+**Windows**: Get-Service, //./pipe/*, where.exe, Set-ExecutionPolicy
 
-Focus on the specific error! Don't get distracted by generic wrapper messages.
+## 4. 解决原则
+1. 先诊断验证（检查服务状态）
+2. 修复根本原因（不是重复失败命令）
+3. 不确定时询问用户
 
-## Step 5: Context-Aware Diagnosis
-Consider the platform and environment:
-- Linux: /var/run/docker.sock, systemctl, journalctl
-- Windows: Named pipes (//./pipe/*), Get-Service, Event Viewer
-- Check: Is the required service actually running? Use appropriate commands.
-
-## Common Error Patterns
-
-### Docker Daemon Not Running
-Symptoms: "Cannot connect", "connection refused", "no such file"
-Specific indicators:
-  - Linux: "/var/run/docker.sock" not found or no permission
-  - Windows: "//./pipe/dockerDesktopLinuxEngine" not found
-Root cause: Docker service/daemon is not started
-Diagnosis: Check service status (systemctl status docker / Get-Service -Name Docker)
-Fix: Start the service (sudo systemctl start docker / Start-Service -Name Docker)
-
-### Port Already in Use
-Symptoms: "address already in use", "EADDRINUSE", "bind failed"
-Specific indicators: Mentions specific port number
-Root cause: Another process is using that port
-Diagnosis: Find the process (ss -tulpn | grep PORT / netstat -ano | findstr PORT)
-Fix: Kill the process or use a different port
-
-### Permission Denied
-Symptoms: "permission denied", "EACCES", "access denied"
-Specific indicators: Mentions specific file/directory path
-Root cause: User lacks permissions
-Diagnosis: Check ownership and permissions (ls -la / icacls)
-Fix: Use sudo, change permissions (chmod), or add user to group
-
-### Missing Dependency
-Symptoms: "command not found", "module not found", "cannot find package"
-Specific indicators: Mentions specific command/module/package name
-Root cause: Required software is not installed
-Diagnosis: Check if command exists (which / where)
-Fix: Install the package (apt install / npm install / pip install)
-
-## Decision Rules
-1. ALWAYS read the FULL stderr, not just the first line
-2. Specific errors OVERRIDE generic errors in your analysis
-3. When multiple errors appear, work backwards from the most specific one
-4. Platform-specific paths/services indicate what to check
-5. Don't retry the exact same command if the error is clear - fix the root cause first
+**反模式**：
+- ❌ 只看第一行错误
+- ❌ 忽略最具体的错误消息
+- ❌ 失败后不分析就重试相同命令
 """
 
 # ============================================================================

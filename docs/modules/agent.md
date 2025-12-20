@@ -1,6 +1,6 @@
 # Agent 模块
 
-LLM 驱动的自主部署 Agent。
+部署规划和步骤执行的核心模块。
 
 **模块路径**：`auto_deployer.llm.agent`
 
@@ -8,112 +8,88 @@ LLM 驱动的自主部署 Agent。
 
 ## 概述
 
-`agent` 模块是 Auto-Deployer 的核心，实现了基于 LLM 的自主决策循环。Agent 通过与 LLM API 交互，分析当前状态并决定下一步操作，直到部署完成或失败。
+`agent` 模块提供部署规划功能，通过LLM生成结构化的部署计划。该计划随后由Orchestrator模块按步骤执行。
 
 ---
 
 ## 类
 
-### AgentAction
+### DeploymentStep
 
-Agent 决策的动作数据类。
+部署计划中的单个步骤。
 
 ```python
 @dataclass
-class AgentAction:
-    action_type: str
-    command: Optional[str] = None
-    reasoning: Optional[str] = None
-    message: Optional[str] = None
-    question: Optional[str] = None
-    options: Optional[List[str]] = None
-    input_type: str = "choice"
-    category: str = "decision"
-    context: Optional[str] = None
-    default_option: Optional[str] = None
+class DeploymentStep:
+    id: int
+    name: str
+    description: str
+    category: str
+    estimated_commands: List[str] = field(default_factory=list)
+    success_criteria: str = ""
+    depends_on: List[int] = field(default_factory=list)
 ```
 
 #### 属性
 
 | 属性 | 类型 | 说明 |
 |------|------|------|
-| `action_type` | `str` | 动作类型：`"execute"`、`"done"`、`"failed"`、`"ask_user"` |
-| `command` | `Optional[str]` | 要执行的命令（`execute` 时使用） |
-| `reasoning` | `Optional[str]` | LLM 的推理说明 |
-| `message` | `Optional[str]` | 完成/失败消息 |
-| `question` | `Optional[str]` | 要问用户的问题（`ask_user` 时使用） |
-| `options` | `Optional[List[str]]` | 用户可选项 |
-| `input_type` | `str` | 输入类型：`"choice"`、`"text"`、`"confirm"`、`"secret"` |
-| `category` | `str` | 问题分类：`"decision"`、`"confirmation"`、`"information"`、`"error_recovery"` |
-| `context` | `Optional[str]` | 附加上下文信息 |
-| `default_option` | `Optional[str]` | 默认选项 |
-
-#### 动作类型说明
-
-| 类型 | 说明 | 必需字段 |
-|------|------|----------|
-| `execute` | 执行 Shell 命令 | `command` |
-| `done` | 部署成功完成 | `message` |
-| `failed` | 部署失败放弃 | `message` |
-| `ask_user` | 询问用户输入 | `question` |
-
-#### LLM 响应示例
-
-```json
-// 执行命令
-{"action": "execute", "command": "npm install", "reasoning": "安装项目依赖"}
-
-// 询问用户
-{"action": "ask_user", "question": "选择应用端口?", "options": ["3000", "8080", "5000"], "input_type": "choice"}
-
-// 部署完成
-{"action": "done", "message": "应用已部署到 http://192.168.1.100:3000"}
-
-// 部署失败
-{"action": "failed", "message": "缺少必要的数据库配置，无法继续"}
-```
+| `id` | `int` | 步骤唯一ID |
+| `name` | `str` | 步骤名称，如 "Install Node.js" |
+| `description` | `str` | 详细描述 |
+| `category` | `str` | 类别：`prerequisite`、`setup`、`build`、`deploy`、`verify` |
+| `estimated_commands` | `List[str]` | 预计执行的命令（仅供参考） |
+| `success_criteria` | `str` | 成功标准描述 |
+| `depends_on` | `List[int]` | 依赖的步骤ID列表 |
 
 ---
 
-### CommandResult
+### DeploymentPlan
 
-命令执行结果数据类。
+完整的部署方案。
 
 ```python
 @dataclass
-class CommandResult:
-    command: str
-    success: bool
-    stdout: str
-    stderr: str
-    exit_code: int
+class DeploymentPlan:
+    strategy: str
+    components: List[str] = field(default_factory=list)
+    steps: List[DeploymentStep] = field(default_factory=list)
+    risks: List[str] = field(default_factory=list)
+    notes: List[str] = field(default_factory=list)
+    estimated_time: str = ""
+    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
 ```
 
 #### 属性
 
 | 属性 | 类型 | 说明 |
 |------|------|------|
-| `command` | `str` | 执行的命令 |
-| `success` | `bool` | 是否成功（`exit_code == 0`） |
-| `stdout` | `str` | 标准输出 |
-| `stderr` | `str` | 标准错误 |
-| `exit_code` | `int` | 退出码 |
+| `strategy` | `str` | 部署策略：`docker-compose`、`docker`、`traditional`、`static` |
+| `components` | `List[str]` | 所需组件列表，如 `["nodejs", "nginx", "pm2"]` |
+| `steps` | `List[DeploymentStep]` | 有序的部署步骤列表 |
+| `risks` | `List[str]` | 已识别的风险列表 |
+| `notes` | `List[str]` | 注意事项 |
+| `estimated_time` | `str` | 预计执行时间 |
+| `created_at` | `str` | 创建时间（ISO格式） |
+
+#### 方法
+
+**`to_dict() -> dict`**
+
+将计划转换为字典格式，用于日志记录。
 
 ---
 
-### DeploymentAgent
+### DeploymentPlanner
 
-LLM 驱动的自主部署 Agent。
+部署计划生成器。
 
 ```python
-class DeploymentAgent:
+class DeploymentPlanner:
     def __init__(
         self,
         config: LLMConfig,
-        max_iterations: int = 30,
-        log_dir: Optional[str] = None,
-        interaction_handler: Optional[UserInteractionHandler] = None,
-        experience_retriever: Optional[ExperienceRetriever] = None,
+        planning_timeout: int = 60,
     ) -> None: ...
 ```
 
@@ -121,324 +97,140 @@ class DeploymentAgent:
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| `config` | `LLMConfig` | LLM 配置（必须包含 `api_key`） |
-| `max_iterations` | `int` | 最大迭代次数，默认 30 |
-| `log_dir` | `Optional[str]` | 日志目录，默认 `./agent_logs` |
-| `interaction_handler` | `Optional[UserInteractionHandler]` | 用户交互处理器 |
-| `experience_retriever` | `Optional[ExperienceRetriever]` | 经验检索器 |
-
-#### 属性
-
-| 属性 | 类型 | 说明 |
-|------|------|------|
-| `config` | `LLMConfig` | LLM 配置 |
-| `max_iterations` | `int` | 最大迭代次数 |
-| `history` | `List[dict]` | 命令执行历史 |
-| `user_interactions` | `List[dict]` | 用户交互历史 |
-| `current_log_file` | `Optional[Path]` | 当前日志文件路径 |
+| `config` | `LLMConfig` | LLM配置（必须包含 `api_key`） |
+| `planning_timeout` | `int` | 规划超时时间（秒），默认60 |
 
 #### 方法
 
-##### deploy
+**`create_plan(...) -> Optional[DeploymentPlan]`**
 
-运行 SSH 远程自主部署循环。
+创建结构化的部署计划。
 
 ```python
-def deploy(
+def create_plan(
     self,
-    request: DeploymentRequest,
-    host_facts: Optional[RemoteHostFacts],
-    ssh_session: SSHSession,
-    repo_context: Optional[RepoContext] = None,
-) -> bool
+    repo_url: str,
+    deploy_dir: str,
+    host_info: dict,
+    repo_analysis: Optional[str] = None,
+    project_type: Optional[str] = None,
+    framework: Optional[str] = None,
+    is_local: bool = False,
+) -> Optional[DeploymentPlan]:
 ```
+
+**参数：**
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| `request` | `DeploymentRequest` | 部署请求 |
-| `host_facts` | `Optional[RemoteHostFacts]` | 远程主机信息 |
-| `ssh_session` | `SSHSession` | 活跃的 SSH 会话 |
-| `repo_context` | `Optional[RepoContext]` | 预分析的仓库上下文 |
+| `repo_url` | `str` | 仓库URL |
+| `deploy_dir` | `str` | 目标部署目录 |
+| `host_info` | `dict` | 主机信息字典 |
+| `repo_analysis` | `Optional[str]` | 预分析的仓库上下文 |
+| `project_type` | `Optional[str]` | 检测到的项目类型 |
+| `framework` | `Optional[str]` | 检测到的框架 |
+| `is_local` | `bool` | 是否本地部署 |
 
-**返回**：`True` 表示部署成功，`False` 表示失败。
+**返回：**
+- 成功时返回 `DeploymentPlan`
+- 失败时返回 `None`
 
-##### deploy_local
+**`display_plan(plan: DeploymentPlan) -> None`** (静态方法)
 
-运行本地自主部署循环。
-
-```python
-def deploy_local(
-    self,
-    request: LocalDeploymentRequest,
-    host_facts: Optional[LocalHostFacts],
-    local_session: LocalSession,
-    repo_context: Optional[RepoContext] = None,
-) -> bool
-```
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `request` | `LocalDeploymentRequest` | 本地部署请求 |
-| `host_facts` | `Optional[LocalHostFacts]` | 本地主机信息 |
-| `local_session` | `LocalSession` | 本地命令执行会话 |
-| `repo_context` | `Optional[RepoContext]` | 预分析的仓库上下文 |
-
-**返回**：`True` 表示部署成功，`False` 表示失败。
+以可读格式显示部署计划。
 
 ---
 
-## Agent 循环详解
+## 工作流程
+
+### 规划阶段
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Agent Main Loop                               │
-│                                                                 │
-│  for iteration in 1..max_iterations:                            │
-│      │                                                          │
-│      ▼                                                          │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ 1. 构建 Prompt                                           │   │
-│  │    - 系统提示（角色定义、可用动作、最佳实践）              │   │
-│  │    - 仓库上下文（项目类型、框架、关键文件）               │   │
-│  │    - 主机信息（OS、已安装工具）                          │   │
-│  │    - 历史经验（从知识库检索）                            │   │
-│  │    - 命令历史（已执行命令及结果）                        │   │
-│  │    - 用户交互历史                                        │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│      │                                                          │
-│      ▼                                                          │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ 2. 调用 LLM API                                          │   │
-│  │    - 发送 Prompt                                         │   │
-│  │    - 请求 JSON 格式响应                                  │   │
-│  │    - 处理速率限制（自动重试）                            │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│      │                                                          │
-│      ▼                                                          │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ 3. 解析响应为 AgentAction                                │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│      │                                                          │
-│      ▼                                                          │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ 4. 执行动作                                              │   │
-│  │                                                          │   │
-│  │    if action == "execute":                               │   │
-│  │        result = session.run(command)                     │   │
-│  │        history.append(result)                            │   │
-│  │        continue loop                                     │   │
-│  │                                                          │   │
-│  │    if action == "ask_user":                              │   │
-│  │        response = handler.ask(question)                  │   │
-│  │        if cancelled: return False                        │   │
-│  │        user_interactions.append(response)                │   │
-│  │        continue loop                                     │   │
-│  │                                                          │   │
-│  │    if action == "done":                                  │   │
-│  │        log_success()                                     │   │
-│  │        return True                                       │   │
-│  │                                                          │   │
-│  │    if action == "failed":                                │   │
-│  │        log_failure()                                     │   │
-│  │        return False                                      │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                                                                 │
-│  // 达到 max_iterations                                         │
-│  log_max_iterations()                                           │
-│  return False                                                   │
-└─────────────────────────────────────────────────────────────────┘
+1. 收集上下文信息
+   ├─ 仓库信息（语言、框架、依赖）
+   ├─ 主机信息（OS、可用工具）
+   └─ 项目分析结果
+
+2. 调用LLM生成计划
+   └─ 使用 prompts/planning.py 中的提示模板
+   └─ LLM返回结构化JSON
+
+3. 解析和验证计划
+   ├─ 提取JSON内容
+   ├─ 验证必需字段（strategy, steps）
+   └─ 构建DeploymentPlan对象
+
+4. 显示计划给用户
+   └─ 包括策略、组件、步骤、风险、预估时间
+
+5. (可选) 用户确认
+   └─ 如果 require_plan_approval=true
+```
+
+### 示例输出
+
+```
+================================================================================
+📋 DEPLOYMENT PLAN
+================================================================================
+Strategy: docker-compose
+Components: docker, docker-compose
+Estimated Time: 5-10 minutes
+Total Steps: 4
+
+⚠️  Identified Risks:
+  - Docker service must be running
+  - Port 3000 may be in use
+
+📝 Notes:
+  - Using existing docker-compose.yml
+  - Application will run in detached mode
+
+📍 Deployment Steps:
+--------------------------------------------------------------------------------
+
+1. Verify Docker Installation [prerequisite]
+   Check if Docker and Docker Compose are installed
+   Success: Docker version displayed successfully
+
+2. Clone Repository [setup]
+   Clone the repository to deployment directory
+   Depends on: Step(s) 1
+
+3. Build and Start Services [deploy]
+   Run docker-compose up -d to start services
+   Depends on: Step(s) 2
+
+4. Verify Deployment [verify]
+   Check if application is responding on port 3000
+   Depends on: Step(s) 3
+
+================================================================================
 ```
 
 ---
 
-## Prompt 构建策略
+## 与其他模块的关系
 
-Agent 的 Prompt 由以下部分组成：
+- **workflow.py**: 调用 `DeploymentPlanner` 生成计划
+- **orchestrator**: 接收 `DeploymentPlan` 并执行步骤
+- **prompts/planning.py**: 提供规划阶段的LLM提示模板
+- **config**: 读取 `planning_timeout` 和 `require_plan_approval` 配置
 
-### 系统提示词
+---
 
-定义 Agent 角色和能力：
-- 角色：DevOps 部署专家
-- 可用动作：execute, done, failed, ask_user
-- 部署策略：Docker Compose > Docker > 传统方式
-- Shell 最佳实践
-- 错误诊断指南
+## 配置
 
-### 仓库上下文（如果有）
-
-```
-# Pre-Analyzed Repository Context
-- URL: https://github.com/user/project.git
-- Detected Type: nodejs
-- Framework: Next.js
-
-## Directory Structure
-project/
-├── package.json
-├── next.config.js
-└── ...
-
-## Available Scripts
-- npm run dev: next dev
-- npm run build: next build
-- npm start: next start
-
-## Key Files
-### package.json
-{...}
-```
-
-### 当前状态
+规划器相关配置位于 `config/default_config.json`:
 
 ```json
 {
-  "repo_url": "...",
-  "server": {
-    "target": "user@host:22",
-    "os": "Ubuntu 22.04"
-  },
-  "command_history": [
-    {
-      "iteration": 1,
-      "command": "git clone ...",
-      "success": true,
-      "stdout": "..."
-    }
-  ],
-  "user_interactions": [...]
+  "agent": {
+    "require_plan_approval": false,
+    "planning_timeout": 60
+  }
 }
 ```
 
----
-
-## 使用示例
-
-### 直接使用 Agent
-
-```python
-from auto_deployer.llm.agent import DeploymentAgent
-from auto_deployer.config import LLMConfig
-from auto_deployer.ssh import SSHSession, SSHCredentials
-
-# 配置 LLM
-llm_config = LLMConfig(
-    provider="gemini",
-    model="gemini-2.5-flash",
-    api_key="your-api-key",
-    temperature=0.0,
-)
-
-# 创建 Agent
-agent = DeploymentAgent(
-    config=llm_config,
-    max_iterations=30,
-    log_dir="./my_logs",
-)
-
-# 创建 SSH 会话
-creds = SSHCredentials(...)
-session = SSHSession(creds)
-session.connect()
-
-# 运行部署
-from auto_deployer.workflow import DeploymentRequest
-request = DeploymentRequest(...)
-
-success = agent.deploy(
-    request=request,
-    host_facts=None,  # 可选
-    ssh_session=session,
-    repo_context=None,  # 可选
-)
-
-print(f"部署{'成功' if success else '失败'}")
-print(f"日志文件: {agent.current_log_file}")
-```
-
-### 使用经验检索
-
-```python
-from auto_deployer.knowledge import ExperienceStore, ExperienceRetriever
-
-# 创建经验检索器
-store = ExperienceStore()
-retriever = ExperienceRetriever(store)
-
-# 注入到 Agent
-agent = DeploymentAgent(
-    config=llm_config,
-    experience_retriever=retriever,
-)
-```
-
-### 自定义交互处理
-
-```python
-from auto_deployer.interaction import CallbackInteractionHandler
-
-def my_ask_callback(request):
-    # 自定义交互逻辑（如显示 GUI 对话框）
-    print(f"问题: {request.question}")
-    user_input = my_gui_dialog(request.options)
-    return InteractionResponse(value=user_input)
-
-handler = CallbackInteractionHandler(ask_callback=my_ask_callback)
-
-agent = DeploymentAgent(
-    config=llm_config,
-    interaction_handler=handler,
-)
-```
-
----
-
-## 日志格式
-
-每次部署会生成一个 JSON 日志文件：
-
-```json
-{
-  "repo_url": "https://github.com/user/project.git",
-  "target": "user@host:22",
-  "deploy_dir": "~/project",
-  "start_time": "2024-12-01T10:00:00",
-  "end_time": "2024-12-01T10:05:30",
-  "status": "success",
-  "config": {
-    "model": "gemini-2.5-flash",
-    "temperature": 0.0,
-    "max_iterations": 30,
-    "endpoint": "..."
-  },
-  "context": {
-    "project_type": "nodejs",
-    "framework": "Next.js"
-  },
-  "steps": [
-    {
-      "iteration": 1,
-      "timestamp": "2024-12-01T10:00:05",
-      "action": "execute",
-      "command": "git clone ...",
-      "reasoning": "首先克隆仓库",
-      "result": {
-        "success": true,
-        "exit_code": 0,
-        "stdout": "Cloning into...",
-        "stderr": ""
-      }
-    }
-  ]
-}
-```
-
----
-
-## 相关文档
-
-- [config](config.md) - LLMConfig 配置
-- [ssh](ssh.md) - SSHSession
-- [local](local.md) - LocalSession
-- [interaction](interaction.md) - 用户交互处理
-- [knowledge](knowledge.md) - 经验检索
-
+- **`require_plan_approval`**: 是否需要用户批准计划后才执行
+- **`planning_timeout`**: LLM生成计划的超时时间（秒）

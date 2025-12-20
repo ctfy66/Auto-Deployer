@@ -61,27 +61,26 @@ auto-deployer logs --file agent_logs/deploy_<project>_<timestamp>.json
 
 ## Architecture
 
-### Two-Phase Deployment Model
+### Deployment Model
 
-The system operates in two distinct phases:
+The system uses a **two-phase deployment model** (planning + execution):
 
 1. **Planning Phase** (`DeploymentPlanner` in [llm/agent.py](src/auto_deployer/llm/agent.py))
    - LLM analyzes the project and generates a structured `DeploymentPlan`
    - Plan contains: strategy, components, ordered steps, risks, estimated time
    - User can review and approve the plan before execution
-   - Controlled by `enable_planning` and `require_plan_approval` config flags
+   - Controlled by `require_plan_approval` config flag
 
 2. **Execution Phase** (`DeploymentOrchestrator` in [orchestrator/orchestrator.py](src/auto_deployer/orchestrator/orchestrator.py))
    - Executes the plan step-by-step using `StepExecutor`
    - Each step runs in its own isolated LLM loop with max iterations
    - Step failures trigger user interaction: retry/skip/abort
-   - Falls back to legacy mode if planning fails
 
 ### Core Components
 
 **Workflow Layer** ([workflow.py](src/auto_deployer/workflow.py))
 - `DeploymentWorkflow`: Main orchestrator coordinating all phases
-- Routes to either Orchestrator mode (new) or Legacy Agent mode (old)
+- Uses Orchestrator mode (plan-execute architecture)
 - Handles both remote SSH and local deployment requests
 
 **Analysis Layer** ([analyzer/repo_analyzer.py](src/auto_deployer/analyzer/repo_analyzer.py))
@@ -90,9 +89,7 @@ The system operates in two distinct phases:
 - Pre-analysis is fed to the LLM to provide context before deployment starts
 
 **Intelligence Layer** ([llm/agent.py](src/auto_deployer/llm/agent.py))
-- `DeploymentAgent`: Legacy single-loop agent (still supported)
 - `DeploymentPlanner`: Creates structured deployment plans via LLM
-- `AgentAction`: Structured LLM decisions (execute/done/failed/ask_user)
 - Supports multiple LLM providers via provider abstraction
 
 **Orchestration Layer** ([orchestrator/](src/auto_deployer/orchestrator/))
@@ -155,9 +152,8 @@ Configuration lives in [config/default_config.json](config/default_config.json) 
 - Proxy: Optional HTTP/HTTPS proxy for API requests
 
 **Agent Settings**
-- `max_iterations`: Total iterations for legacy mode (default: 180)
+- `max_iterations`: Total iteration budget (default: 180) - used for step allocation
 - `max_iterations_per_step`: Per-step iterations in orchestrator mode (default: 30)
-- `enable_planning`: Enable two-phase deployment (default: true)
 - `require_plan_approval`: Ask user to approve plan (default: false)
 - `planning_timeout`: LLM timeout for plan generation (default: 60s)
 
@@ -167,11 +163,13 @@ Configuration lives in [config/default_config.json](config/default_config.json) 
 
 ## Important Implementation Details
 
-### Orchestrator vs Legacy Mode
-- The system defaults to **Orchestrator mode** when `enable_planning=true`
-- Orchestrator mode executes each step independently with step-level retries
-- Legacy mode runs a single LLM loop for the entire deployment
-- Orchestrator mode is more controllable and provides better failure recovery
+### Step Execution Model
+
+The system uses a **plan-execute architecture**:
+- Each step is executed independently with dedicated iteration budget
+- Step-level retries provide fine-grained control
+- Steps can access previous step results via `deploy_context.step_results`
+- Better failure recovery and controllability compared to monolithic loops
 
 ### Step Execution Isolation
 Each step in [orchestrator/step_executor.py](src/auto_deployer/orchestrator/step_executor.py):
@@ -195,8 +193,8 @@ Each step in [orchestrator/step_executor.py](src/auto_deployer/orchestrator/step
 ### Logging Format
 All deployments save to `agent_logs/deploy_<project>_<timestamp>.json`:
 - Full conversation history (system prompts, user messages, assistant responses)
-- Deployment plan (if orchestrator mode)
-- Step results (if orchestrator mode)
+- Deployment plan
+- Step results
 - Command history with outputs
 - Final status and metadata
 

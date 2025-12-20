@@ -10,11 +10,12 @@ from .templates import (
     get_environment_isolation_rules,
 )
 from .cot_framework import (
-    CHAIN_OF_THOUGHT_FRAMEWORK,
-    EXECUTION_COT_TEMPLATE,
-    ERROR_ANALYSIS_COT,
+    CORE_COT_PRINCIPLES,
+    EXECUTION_PHASE_GUIDE,
+    ERROR_ANALYSIS_FRAMEWORK as ERROR_ANALYSIS_COT,
     USER_FEEDBACK_COT,
     get_reasoning_requirements,
+    STANDARD_REASONING_FORMAT,
 )
 
 
@@ -77,9 +78,9 @@ Focus ONLY on completing this specific step using Chain of Thought reasoning.
 # User Interactions in This Step
 {user_interactions}
 
-{CHAIN_OF_THOUGHT_FRAMEWORK}
+{CORE_COT_PRINCIPLES}
 
-{EXECUTION_COT_TEMPLATE}
+{EXECUTION_PHASE_GUIDE}
 
 # Available Actions (respond with JSON including reasoning)
 
@@ -89,12 +90,22 @@ Focus ONLY on completing this specific step using Chain of Thought reasoning.
   "action": "execute",
   "command": "your command here",
   "reasoning": {{
-    "observation": "current state and what you see",
-    "analysis": "what you're trying to achieve",
-    "alternatives_considered": ["option1: why not chosen", "option2: chosen because..."],
-    "decision": "why this specific command",
-    "verification": "how you'll check if it worked",
-    "fallback": "what if it fails"
+    "why": "为什么执行这个命令",
+    "verify": "如何验证成功"
+  }}
+}}
+```
+
+对于复杂操作，可以包含更详细的reasoning：
+```json
+{{
+  "action": "execute",
+  "command": "your command here",
+  "reasoning": {{
+    "observation": "当前状态",
+    "goal": "目标",
+    "action": "采取的行动",
+    "verification": "验证方法"
   }}
 }}
 ```
@@ -107,22 +118,20 @@ Focus ONLY on completing this specific step using Chain of Thought reasoning.
   "outputs": {{"key": "value"}},
   "reasoning": {{
     "observation": "final state and outputs",
-    "verification": "how you confirmed success criteria met",
-    "success_criteria_met": "specific criteria satisfied"
+    "verification": "how you confirmed success criteria met"
   }}
 }}
 ```
 
-3. Declare step failed (cannot continue):
+3. Declare step failed:
 ```json
 {{
   "action": "step_failed",
   "message": "why it failed",
   "reasoning": {{
-    "observation": "what errors occurred",
-    "root_cause_analysis": "deep analysis of why it failed",
-    "attempts_made": ["what you tried"],
-    "why_failed": "why recovery is not possible"
+    "observation": "errors encountered",
+    "root_cause": "why it failed",
+    "attempts": ["tried solutions"]
   }}
 }}
 ```
@@ -134,9 +143,7 @@ Focus ONLY on completing this specific step using Chain of Thought reasoning.
   "question": "your question",
   "options": ["option1", "option2"],
   "reasoning": {{
-    "observation": "current situation",
-    "analysis": "what decision needs to be made",
-    "why_asking": "why you can't decide autonomously",
+    "why": "need user decision",
     "implications": "what each option means"
   }}
 }}
@@ -145,16 +152,11 @@ Focus ONLY on completing this specific step using Chain of Thought reasoning.
 # Rules
 1. Focus ONLY on the current step's goal - do not think about other steps
 2. Use the success criteria to determine when the step is done
-3. **CRITICAL: Apply Chain of Thought reasoning before EVERY action**:
-   - OBSERVE the current state
-   - ANALYZE what needs to be done
-   - REASON about 2-3 possible approaches
-   - DECIDE on the best approach with verification plan
-4. If a command fails, use the Error Analysis CoT framework:
-   - Extract ALL error indicators (not just first line)
-   - Build causal chain from symptom to root cause
-   - Generate multiple solutions
-   - Choose most likely fix based on specific errors
+3. **使用分级推理**:
+   - 简单操作：只需"why"和"verify"
+   - 中等复杂度：包含"observation"、"goal"、"action"、"verification"
+   - 复杂决策或错误：提供完整分析
+4. 命令失败时使用错误分析框架（见下文）
 5. Maximum {max_iterations} iterations for this step (current: {current_iteration})
 6. Declare step_done as soon as the success criteria is met
 7. If stuck after multiple failures, use ask_user to explain the situation
@@ -230,23 +232,28 @@ For Docker specifically:
 # Output Format
 
 Respond with valid JSON including the "reasoning" field as specified above.
-The reasoning field is MANDATORY and will be logged for system improvement.
 
-Example:
+简单命令示例：
 ```json
 {{
   "action": "execute",
   "command": "npm install",
   "reasoning": {{
-    "observation": "package.json exists with 45 dependencies, no node_modules folder",
-    "analysis": "Need to install dependencies before building or starting",
-    "alternatives_considered": [
-      "npm install -g: BAD - pollutes global namespace",
-      "npm install: GOOD - installs locally in node_modules"
-    ],
-    "decision": "Run 'npm install' for local dependency installation",
-    "verification": "Check node_modules/ folder exists and contains packages",
-    "fallback": "If fails, check Node.js/npm version compatibility"
+    "why": "package.json存在但node_modules缺失，需安装依赖",
+    "verify": "检查node_modules/目录存在"
+  }}
+}}
+```
+
+复杂决策示例：
+```json
+{{
+  "action": "ask_user",
+  "question": "端口3000被占用，如何处理？",
+  "options": ["杀掉占用进程", "使用端口3001", "使用端口8080"],
+  "reasoning": {{
+    "why": "端口冲突，需用户决策避免破坏性操作",
+    "implications": "杀进程可能影响其他服务，换端口更安全"
   }}
 }}
 ```
@@ -312,9 +319,9 @@ Focus ONLY on completing this specific step using Chain of Thought reasoning.
 # User Interactions in This Step
 {user_interactions}
 
-{CHAIN_OF_THOUGHT_FRAMEWORK}
+{CORE_COT_PRINCIPLES}
 
-{EXECUTION_COT_TEMPLATE}
+{EXECUTION_PHASE_GUIDE}
 
 # Available Actions (respond with JSON including reasoning)
 
@@ -324,12 +331,8 @@ Focus ONLY on completing this specific step using Chain of Thought reasoning.
   "action": "execute",
   "command": "your PowerShell command",
   "reasoning": {{
-    "observation": "current state",
-    "analysis": "goal and constraints",
-    "alternatives_considered": ["options evaluated"],
-    "decision": "why this command",
-    "verification": "how to check success",
-    "fallback": "what if fails"
+    "why": "为什么执行",
+    "verify": "如何验证"
   }}
 }}
 ```
@@ -342,8 +345,7 @@ Focus ONLY on completing this specific step using Chain of Thought reasoning.
   "outputs": {{"key": "value"}},
   "reasoning": {{
     "observation": "final state",
-    "verification": "success criteria confirmed",
-    "success_criteria_met": "how verified"
+    "verification": "success criteria confirmed"
   }}
 }}
 ```
@@ -355,9 +357,7 @@ Focus ONLY on completing this specific step using Chain of Thought reasoning.
   "message": "why it failed",
   "reasoning": {{
     "observation": "errors encountered",
-    "root_cause_analysis": "why it failed",
-    "attempts_made": ["tried solutions"],
-    "why_failed": "cannot recover"
+    "root_cause": "why it failed"
   }}
 }}
 ```
@@ -369,9 +369,7 @@ Focus ONLY on completing this specific step using Chain of Thought reasoning.
   "question": "your question",
   "options": ["option1", "option2"],
   "reasoning": {{
-    "observation": "current situation",
-    "why_asking": "need user decision",
-    "implications": "what each option means"
+    "why": "need user decision"
   }}
 }}
 ```
@@ -389,7 +387,7 @@ Focus ONLY on completing this specific step using Chain of Thought reasoning.
 # Rules
 1. Use PowerShell syntax, NOT bash/Linux commands
 2. Use `$env:USERPROFILE` instead of `~` for home directory
-3. **CRITICAL: Apply Chain of Thought reasoning before EVERY action**
+3. **使用分级推理**：简单操作用简单格式，复杂决策才详细说明
 4. Maximum {max_iterations} iterations (current: {current_iteration})
 5. If a command fails, use Error Analysis CoT (see below)
 6. Declare step_done as soon as the success criteria is met
@@ -441,8 +439,8 @@ Fix:
 
 ### Path Separators
 Windows uses backslashes in paths:
-- Use `\` or `\\` in paths, not `/`
-- Or use `$env:USERPROFILE\path` which PowerShell handles correctly
+- Use `\\` or `\\\\` in paths, not `/`
+- Or use `$env:USERPROFILE\\path` which PowerShell handles correctly
 
 ## Decision Rules for Windows
 1. ALWAYS read the FULL stderr, not just the first line
@@ -455,20 +453,27 @@ Windows uses backslashes in paths:
 # Output Format
 
 Respond with valid JSON including the "reasoning" field as specified above.
-The reasoning field is MANDATORY for all actions.
 
-Example:
+简单命令示例：
 ```json
 {{
   "action": "execute",
   "command": "npm install",
   "reasoning": {{
-    "observation": "package.json found, no node_modules",
-    "analysis": "Need to install dependencies",
-    "alternatives_considered": ["npm install (local)", "npm install -g (global - BAD)"],
-    "decision": "Use local npm install",
-    "verification": "Check node_modules exists",
-    "fallback": "Check npm/Node versions if fails"
+    "why": "package.json存在但node_modules缺失",
+    "verify": "检查node_modules目录存在"
+  }}
+}}
+```
+
+复杂决策示例：
+```json
+{{
+  "action": "step_failed",
+  "message": "Docker Desktop not running on Windows",
+  "reasoning": {{
+    "observation": "Error: //./pipe/dockerDesktopLinuxEngine not found",
+    "root_cause": "Docker Desktop应用未运行（仅服务不够）"
   }}
 }}
 ```

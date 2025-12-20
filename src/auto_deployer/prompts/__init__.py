@@ -27,15 +27,6 @@ from .execution_step import (
     STEP_VERIFICATION_PROMPT,  # Legacy constant
 )
 
-# Agent execution prompts (Legacy mode)
-from .execution_agent import (
-    build_windows_system_prompt,
-    build_linux_system_prompt,
-    build_macos_system_prompt,
-    build_agent_prompt,
-    build_local_agent_prompt,
-)
-
 # Reusable templates
 from .templates import (
     USER_INTERACTION_GUIDE,
@@ -60,12 +51,6 @@ __all__ = [
     "STEP_EXECUTION_PROMPT",
     "STEP_EXECUTION_PROMPT_WINDOWS",
     "STEP_VERIFICATION_PROMPT",
-    # Agent execution
-    "build_windows_system_prompt",
-    "build_linux_system_prompt",
-    "build_macos_system_prompt",
-    "build_agent_prompt",
-    "build_local_agent_prompt",
     # Templates
     "USER_INTERACTION_GUIDE",
     "ERROR_DIAGNOSIS_FRAMEWORK",

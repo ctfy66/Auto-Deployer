@@ -12,7 +12,7 @@ from typing import Optional, Union
 from .analyzer import RepoAnalyzer, RepoContext
 from .config import AppConfig
 from .interaction import UserInteractionHandler, CLIInteractionHandler, InteractionRequest, InputType, QuestionCategory
-from .llm.agent import DeploymentAgent, DeploymentPlanner
+from .llm.agent import DeploymentPlanner
 from .local import LocalSession, LocalProbe, LocalHostFacts
 from .ssh import RemoteHostFacts, RemoteProbe, SSHCredentials, SSHSession
 from .utils.logging import get_logger
@@ -183,14 +183,8 @@ class DeploymentWorkflow:
         session: LocalSession,
         repo_context: Optional[RepoContext] = None,
     ) -> None:
-        """使用 Agent 模式本地部署。"""
-        # 检查是否使用新的 Orchestrator 模式
-        use_orchestrator = getattr(self.config.agent, 'use_orchestrator', True)
-        
-        if use_orchestrator and self.config.agent.enable_planning:
-            self._run_local_orchestrator_mode(request, host_facts, session, repo_context)
-        else:
-            self._run_local_legacy_agent_mode(request, host_facts, session, repo_context)
+        """使用 Orchestrator 模式本地部署（plan-execute架构）。"""
+        self._run_local_orchestrator_mode(request, host_facts, session, repo_context)
     
     def _run_local_orchestrator_mode(
         self,
@@ -199,10 +193,10 @@ class DeploymentWorkflow:
         session: LocalSession,
         repo_context: Optional[RepoContext] = None,
     ) -> None:
-        """使用新的 Orchestrator 模式本地部署（步骤独立执行）"""
+        """使用 Orchestrator 模式本地部署（步骤独立执行）"""
         from .orchestrator import DeploymentOrchestrator, DeployContext
         
-        logger.info("🤖 Running in Local Orchestrator mode (step-based execution)")
+        logger.info("🤖 Running in Orchestrator mode (step-based execution)")
         logger.info("   💬 Interactive mode enabled - Agent can ask for your input")
         
         if repo_context:
@@ -242,8 +236,7 @@ class DeploymentWorkflow:
         )
         
         if not plan:
-            logger.error("Failed to create deployment plan, falling back to legacy mode")
-            self._run_local_legacy_agent_mode(request, host_facts, session, repo_context)
+            logger.error("Failed to create deployment plan")
             return
         
         # 3. 显示计划
@@ -281,44 +274,6 @@ class DeploymentWorkflow:
         else:
             logger.error("💥 Local deployment failed")
     
-    def _run_local_legacy_agent_mode(
-        self,
-        request: LocalDeploymentRequest,
-        host_facts: Optional[LocalHostFacts],
-        session: LocalSession,
-        repo_context: Optional[RepoContext] = None,
-    ) -> None:
-        """使用传统 Agent 模式本地部署（单一循环）"""
-        logger.info("🤖 Running in Local Legacy Agent mode")
-        logger.info("   💬 Interactive mode enabled - Agent can ask for your input")
-        
-        if repo_context:
-            logger.info("   (with pre-analyzed repository context)")
-        
-        # 尝试加载经验检索器
-        experience_retriever = self._get_experience_retriever()
-        if experience_retriever:
-            logger.info("   🧠 Memory enabled - using past deployment experiences")
-        
-        agent = DeploymentAgent(
-            self.config.llm,
-            max_iterations=self.config.agent.max_iterations,
-            interaction_handler=self.interaction_handler,
-            experience_retriever=experience_retriever,
-            enable_planning=self.config.agent.enable_planning,
-            require_plan_approval=self.config.agent.require_plan_approval,
-            planning_timeout=self.config.agent.planning_timeout,
-        )
-        success = agent.deploy_local(request, host_facts, session, repo_context)
-        
-        if success:
-            logger.info("🎉 Local deployment completed successfully!")
-            # 自动提取经验
-            if agent.current_log_file:
-                self._auto_extract_from_log(str(agent.current_log_file))
-        else:
-            logger.error("💥 Local deployment failed")
-
     def _run_agent_mode(
         self,
         request: DeploymentRequest,
@@ -326,14 +281,8 @@ class DeploymentWorkflow:
         session: SSHSession,
         repo_context: Optional[RepoContext] = None,
     ) -> None:
-        """使用 Agent 模式：LLM 主导部署，使用预分析的仓库上下文。"""
-        # 检查是否使用新的 Orchestrator 模式
-        use_orchestrator = getattr(self.config.agent, 'use_orchestrator', True)
-        
-        if use_orchestrator and self.config.agent.enable_planning:
-            self._run_orchestrator_mode(request, host_facts, session, repo_context)
-        else:
-            self._run_legacy_agent_mode(request, host_facts, session, repo_context)
+        """使用 Orchestrator 模式：plan-execute分离架构。"""
+        self._run_orchestrator_mode(request, host_facts, session, repo_context)
     
     def _run_orchestrator_mode(
         self,
@@ -342,7 +291,7 @@ class DeploymentWorkflow:
         session: SSHSession,
         repo_context: Optional[RepoContext] = None,
     ) -> None:
-        """使用新的 Orchestrator 模式部署（步骤独立执行）"""
+        """使用 Orchestrator 模式部署（步骤独立执行）"""
         from .orchestrator import DeploymentOrchestrator, DeployContext
         
         logger.info("🤖 Running in Orchestrator mode (step-based execution)")
@@ -389,8 +338,7 @@ class DeploymentWorkflow:
         )
         
         if not plan:
-            logger.error("Failed to create deployment plan, falling back to legacy mode")
-            self._run_legacy_agent_mode(request, host_facts, session, repo_context)
+            logger.error("Failed to create deployment plan")
             return
         
         # 3. 显示计划
@@ -428,43 +376,6 @@ class DeploymentWorkflow:
         else:
             logger.error("💥 Deployment failed")
     
-    def _run_legacy_agent_mode(
-        self,
-        request: DeploymentRequest,
-        host_facts: Optional[RemoteHostFacts],
-        session: SSHSession,
-        repo_context: Optional[RepoContext] = None,
-    ) -> None:
-        """使用传统 Agent 模式（单一循环）"""
-        logger.info("🤖 Running in Legacy Agent mode - LLM will autonomously control deployment")
-        logger.info("   💬 Interactive mode enabled - Agent can ask for your input")
-        
-        if repo_context:
-            logger.info("   (with pre-analyzed repository context)")
-        
-        # 尝试加载经验检索器
-        experience_retriever = self._get_experience_retriever()
-        if experience_retriever:
-            logger.info("   🧠 Memory enabled - using past deployment experiences")
-        
-        agent = DeploymentAgent(
-            self.config.llm,
-            max_iterations=self.config.agent.max_iterations,
-            interaction_handler=self.interaction_handler,
-            experience_retriever=experience_retriever,
-            enable_planning=self.config.agent.enable_planning,
-            require_plan_approval=self.config.agent.require_plan_approval,
-            planning_timeout=self.config.agent.planning_timeout,
-        )
-        success = agent.deploy(request, host_facts, session, repo_context)
-        
-        if success:
-            logger.info("🎉 Agent deployment completed successfully!")
-            # 自动提取经验
-            if agent.current_log_file:
-                self._auto_extract_from_log(str(agent.current_log_file))
-        else:
-            logger.error("💥 Agent deployment failed")
     
     def _ask_plan_approval(self, plan) -> bool:
         """询问用户是否批准部署计划"""

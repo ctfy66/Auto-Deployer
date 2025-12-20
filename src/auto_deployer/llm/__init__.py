@@ -1,6 +1,6 @@
 """LLM provider package."""
 
-from .agent import DeploymentAgent, DeploymentPlanner
+from .agent import DeploymentPlanner
 from .base import BaseLLMProvider, create_llm_provider
 from .gemini import GeminiProvider
 from .openai import OpenAIProvider
@@ -10,8 +10,7 @@ from .openrouter import OpenRouterProvider
 from .openai_compatible import OpenAICompatibleProvider
 
 __all__ = [
-    # Agent classes
-    "DeploymentAgent",
+    # Planning
     "DeploymentPlanner",
     # Provider factory
     "create_llm_provider",

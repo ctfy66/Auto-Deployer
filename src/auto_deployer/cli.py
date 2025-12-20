@@ -337,9 +337,6 @@ def handle_memory_command(args: argparse.Namespace, context: CLIContext) -> int:
         
         print(f"🔄 Refining {len(unprocessed)} experiences with LLM...")
         
-        # 需要 LLM 配置
-        from .llm.agent import DeploymentAgent
-        
         # 创建简单的 LLM 包装器
         class SimpleLLM:
             def __init__(self, config):

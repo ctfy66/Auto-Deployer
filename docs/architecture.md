@@ -6,7 +6,8 @@ Auto-Deployer 是一个 **LLM 驱动的自动化部署工具**。它通过让大
 
 ### 核心设计理念
 
-- **Agent 自主决策**：不依赖预定义的部署脚本，由 LLM 根据项目特征自主规划部署步骤
+- **Plan-Execute 架构**：规划和执行分离，LLM先生成完整部署计划，再按步骤执行
+- **步骤级控制**：每个步骤独立执行，有明确的边界和迭代预算
 - **自我修复能力**：遇到错误时，Agent 会分析日志并尝试修复
 - **人机协作**：关键决策点可以询问用户，避免盲目操作
 - **经验积累**：从历史部署中学习，提升未来部署成功率
@@ -111,15 +112,17 @@ Auto-Deployer 是一个 **LLM 驱动的自动化部署工具**。它通过让大
    ├─ SSH 模式：创建 SSHSession，探测远程主机信息
    └─ 本地模式：创建 LocalSession，探测本地主机信息
 
-3. Agent 部署阶段
-   └─ 创建 DeploymentAgent → 传入上下文 → 启动 Agent 循环
+3. Plan-Execute 部署阶段
+   ├─ Phase 1: 创建 DeploymentPlanner → 生成部署计划
+   └─ Phase 2: 创建 DeploymentOrchestrator → 按步骤执行
 ```
 
 **与其他组件的关系**：
 
 - 调用 `RepoAnalyzer` 分析仓库
 - 创建 `SSHSession` 或 `LocalSession`
-- 实例化并运行 `DeploymentAgent`
+- 使用 `DeploymentPlanner` 生成计划
+- 使用 `DeploymentOrchestrator` 执行计划
 - 可选注入 `InteractionHandler` 和 `ExperienceRetriever`
 
 ---
