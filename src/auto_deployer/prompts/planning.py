@@ -68,12 +68,23 @@ Analyze the repository deeply and create a structured deployment plan using Chai
 
 {PLANNING_PHASE_GUIDE}
 
+# 🎯 README Deployment Priority (CRITICAL)
+
+**Always prioritize README/DEPLOY.md deployment recommendations over default assumptions.**
+
+Key points:
+- Check README for explicit deployment methods 
+- If README only shows dev mode (`npm run dev`), consider it a development-focused project
+- If README recommends cloud platforms but deploying locally, use dev mode
+- Respect the project author's documented workflow - don't over-engineer simple projects
+
 # Task
 Create a deployment plan using the systematic reasoning process above. Think deeply about:
-1. What deployment strategy is best? (Docker if Dockerfile exists, traditional otherwise)
-2. What components need to be installed? (Node.js, Python, Nginx, etc.)
-3. What are the exact steps to deploy this project?
-4. What could go wrong? (missing env files, build errors, etc.)
+1. **What does README recommend for deployment?** (Check this FIRST!)
+2. What deployment strategy is best? (README recommendation → Docker if Dockerfile exists → traditional)
+3. What components need to be installed? (Node.js, Python, Nginx, etc.)
+4. What are the exact steps to deploy this project?
+5. What could go wrong? (missing env files, build errors, README conflicts, etc.)
 
 Output a JSON object with this exact structure:
 ```json
@@ -98,10 +109,16 @@ Output a JSON object with this exact structure:
 ```
 
 # Rules
-1. Choose the SIMPLEST strategy that works:
-   - If docker-compose.yml exists → use "docker-compose"
-   - If only Dockerfile exists → use "docker"
-   - If neither exists → use "traditional" or "static"
+1. **Choose strategy based on README-first priority**:
+   - **STEP 1**: Check README for explicit deployment recommendations
+     * If README recommends specific platform (Vercel/Netlify/etc.) AND doing local deployment → use development mode
+     * If README documents production build process → follow those steps
+     * If README only shows dev mode → consider it a dev-focused project
+   - **STEP 2**: If README is silent, check for Docker files
+     * If docker-compose.yml exists → use "docker-compose"
+     * If only Dockerfile exists → use "docker"
+   - **STEP 3**: Default fallback
+     * If neither Docker nor README guidance → use "traditional" or "static"
 
 2. **Docker-in-Docker Detection (CRITICAL for testing environments)**:
    - If target environment is a container (check for: no systemd at PID 1, /proc/1/cgroup contains 'docker')
@@ -147,7 +164,14 @@ FIRST, show your reasoning process (简洁版，不要太长):
 ## 项目分析
 [类型、技术栈、关键依赖]
 
+## README部署建议分析 (优先考虑)
+README推荐: [明确推荐的部署方式 / 仅有开发模式 / 未提及部署]
+推荐平台: [Vercel/Netlify/Docker/无]
+生产命令: [有/无 - 列出关键命令]
+与本次部署的关系: [是否采纳README建议 + 理由]
+
 ## 策略选择
+README建议: [采纳/不适用 + 原因]
 Docker-Compose: [适合/不适合 + 简短理由]
 Docker: [适合/不适合 + 简短理由]
 Traditional: [适合/不适合 + 简短理由]

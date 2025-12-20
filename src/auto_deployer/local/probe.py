@@ -60,6 +60,7 @@ class LocalHostFacts:
                 "docker": self.has_docker,
             },
         }
+        return payload
 
         
 
