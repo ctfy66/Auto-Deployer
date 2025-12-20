@@ -13,17 +13,20 @@ CORE_COT_PRINCIPLES = """
 
 做决策前遵循：观察 → 分析 → 决策 → 验证
 
-**何时使用完整推理：**
-- 遇到错误或失败
-- 多个可行方案需要选择
-- 用户反馈需要解释
-- 不确定最佳路径
+**两级推理系统：**
 
-**何时使用简化推理：**
-- 明显直接的操作
-- 遵循既定模式
-- 常规命令执行
-- 前一步明确成功
+**正常模式（简化推理）：**
+- 常规命令执行（git clone, npm install等）
+- 明确的下一步操作
+- 前一步成功后的后续操作
+- 使用格式：why + verify
+
+**错误/决策模式（复杂推理）：**
+- 遇到错误或失败时
+- 需要多方案选择
+- 用户交互需要解释
+- 不确定最佳路径
+- 使用格式：observation + analysis + options + chosen + why
 
 **反模式（避免）：**
 - ❌ 不检查状态就决策
@@ -33,12 +36,12 @@ CORE_COT_PRINCIPLES = """
 """
 
 # ============================================================================
-# Tiered Reasoning System
+# Two-Level Reasoning System
 # ============================================================================
 
-# Level 1: Simple Reasoning (for routine operations - 70% of cases)
+# Level 1: Simple Reasoning (for normal operations - 80% of cases)
 SIMPLE_REASONING_FORMAT = """
-## 简化推理格式（常规操作）
+## 简化推理格式（正常模式）
 
 ```json
 {
@@ -54,35 +57,13 @@ SIMPLE_REASONING_FORMAT = """
 适用场景：
 - 标准命令执行（git clone, npm install, pip install）
 - 明确的下一步操作
-- 无需多方案比较的情况
+- 常规部署流程
+- 前一步成功后的后续操作
 """
 
-# Level 2: Standard Reasoning (for moderate complexity - 25% of cases)
-STANDARD_REASONING_FORMAT = """
-## 标准推理格式（中等复杂度）
-
-```json
-{
-  "action": "execute",
-  "command": "npm start",
-  "reasoning": {
-    "observation": "依赖已安装，package.json中有start脚本",
-    "goal": "启动应用并监听端口3000",
-    "action": "使用npm start启动应用",
-    "verification": "检查进程运行且端口3000响应"
-  }
-}
-```
-
-适用场景：
-- 需要配置选择
-- 用户交互决策
-- 服务启动和配置
-"""
-
-# Level 3: Full Reasoning (for complex decisions - 5% of cases)
-FULL_REASONING_FORMAT = """
-## 完整推理格式（复杂决策）
+# Level 2: Complex Reasoning (for errors and difficult decisions - 20% of cases)
+COMPLEX_REASONING_FORMAT = """
+## 复杂推理格式（错误/决策模式）
 
 ```json
 {
@@ -104,10 +85,11 @@ FULL_REASONING_FORMAT = """
 ```
 
 适用场景：
-- 遇到错误需要诊断
+- 遇到错误或失败需要诊断
 - 多个方案需要权衡利弊
 - 风险操作需要决策
 - 需要向用户解释原因
+- 不确定最佳路径时
 """
 
 # ============================================================================
@@ -197,14 +179,15 @@ EXECUTION_PHASE_GUIDE = """
 
 每个步骤：
 1. **执行前**：观察状态，明确目标
-2. **执行**：使用适当的reasoning级别
+2. **执行**：使用适当的推理模式
 3. **执行后**：验证结果，检查成功标准
-4. **失败时**：分析错误，不要重复相同失败的命令
+4. **失败时**：切换到复杂推理模式，分析错误，不要重复相同失败的命令
 
-使用分级推理：
-- 常规操作 → 简化格式（why + verify）
-- 中等复杂度 → 标准格式（observation + goal + action + verification）
-- 复杂决策 → 完整格式（包含options分析）
+使用两级推理：
+- 正常模式 → 简化格式（why + verify）
+- 遇到错误或决策 → 复杂格式（observation + analysis + options + chosen + why）
+
+**重要**：一旦遇到错误，立即切换到复杂推理模式进行详细分析。
 """
 
 # ============================================================================
@@ -219,7 +202,7 @@ def get_cot_framework(
 
     Args:
         phase: "planning" or "execution"
-        complexity: "simple", "standard", "full", or "adaptive" (default)
+        complexity: "simple", "complex", or "adaptive" (default)
 
     Returns:
         Formatted CoT framework string
@@ -236,12 +219,10 @@ def get_cot_framework(
     # Complexity-specific format
     if complexity == "simple":
         reasoning_format = SIMPLE_REASONING_FORMAT
-    elif complexity == "standard":
-        reasoning_format = STANDARD_REASONING_FORMAT
-    elif complexity == "full":
-        reasoning_format = f"{SIMPLE_REASONING_FORMAT}\n\n{STANDARD_REASONING_FORMAT}\n\n{FULL_REASONING_FORMAT}"
-    else:  # adaptive - include all levels
-        reasoning_format = f"{SIMPLE_REASONING_FORMAT}\n\n{STANDARD_REASONING_FORMAT}\n\n{FULL_REASONING_FORMAT}"
+    elif complexity == "complex":
+        reasoning_format = COMPLEX_REASONING_FORMAT
+    else:  # adaptive - include both levels
+        reasoning_format = f"{SIMPLE_REASONING_FORMAT}\n\n{COMPLEX_REASONING_FORMAT}"
 
     # Combine
     parts = [
@@ -263,7 +244,7 @@ def get_reasoning_requirements(detailed: bool = False) -> str:
     """Get reasoning output requirements.
 
     Args:
-        detailed: If True, allow full reasoning. If False, prefer simple reasoning.
+        detailed: If True, allow complex reasoning. If False, prefer simple reasoning.
 
     Returns:
         Requirements string for reasoning output
@@ -272,9 +253,9 @@ def get_reasoning_requirements(detailed: bool = False) -> str:
         return """
 ## Reasoning要求
 
-根据情况选择合适的reasoning级别：
+根据情况选择合适的推理模式：
 
-**简单操作**（常规命令）：
+**正常模式**（常规操作）：
 ```json
 "reasoning": {
   "why": "为什么执行这个命令",
@@ -282,17 +263,7 @@ def get_reasoning_requirements(detailed: bool = False) -> str:
 }
 ```
 
-**中等复杂度**（配置、服务启动）：
-```json
-"reasoning": {
-  "observation": "当前状态",
-  "goal": "目标",
-  "action": "采取的行动",
-  "verification": "验证方法"
-}
-```
-
-**复杂决策**（错误、多方案选择）：
+**错误/决策模式**（遇到错误或需要决策时）：
 ```json
 "reasoning": {
   "observation": "详细状态",
@@ -303,7 +274,7 @@ def get_reasoning_requirements(detailed: bool = False) -> str:
 }
 ```
 
-**原则**：简单情况使用简单推理，复杂情况才详细说明。
+**原则**：正常操作使用简化推理，遇到错误或需要决策时使用复杂推理。
 """
     else:
         return """
@@ -317,7 +288,7 @@ def get_reasoning_requirements(detailed: bool = False) -> str:
 }
 ```
 
-仅在遇到错误或复杂决策时提供详细分析。
+仅在遇到错误或需要决策时切换到复杂推理模式。
 """
 
 
@@ -331,21 +302,21 @@ def get_simple_cot() -> str:
 
 
 def get_standard_cot() -> str:
-    """Get standard CoT framework for moderate complexity.
-    
+    """Get complex CoT framework for errors and decisions.
+
     Returns:
-        Standard CoT framework
+        Complex CoT framework
     """
-    return f"{CORE_COT_PRINCIPLES}\n\n{STANDARD_REASONING_FORMAT}\n\n{ERROR_ANALYSIS_FRAMEWORK}\n\n{USER_INTERACTION_GUIDE}"
+    return f"{CORE_COT_PRINCIPLES}\n\n{COMPLEX_REASONING_FORMAT}\n\n{ERROR_ANALYSIS_FRAMEWORK}\n\n{USER_INTERACTION_GUIDE}"
 
 
 def get_full_cot() -> str:
-    """Get complete CoT framework for complex decisions.
-    
+    """Get complete CoT framework with both reasoning levels.
+
     Returns:
-        Full CoT framework
+        Full CoT framework (adaptive mode)
     """
-    return get_cot_framework(complexity="full")
+    return get_cot_framework(complexity="adaptive")
 
 
 # ============================================================================
@@ -356,7 +327,11 @@ def get_full_cot() -> str:
 CHAIN_OF_THOUGHT_FRAMEWORK = CORE_COT_PRINCIPLES
 PLANNING_COT_TEMPLATE = PLANNING_PHASE_GUIDE
 EXECUTION_COT_TEMPLATE = EXECUTION_PHASE_GUIDE
-REASONING_OUTPUT_FORMAT = f"{SIMPLE_REASONING_FORMAT}\n\n{STANDARD_REASONING_FORMAT}\n\n{FULL_REASONING_FORMAT}"
+REASONING_OUTPUT_FORMAT = f"{SIMPLE_REASONING_FORMAT}\n\n{COMPLEX_REASONING_FORMAT}"
+
+# Legacy compatibility - map old names to new
+STANDARD_REASONING_FORMAT = COMPLEX_REASONING_FORMAT  # Map to complex reasoning
+FULL_REASONING_FORMAT = COMPLEX_REASONING_FORMAT     # Map to complex reasoning
 
 # Deprecated - use ERROR_ANALYSIS_FRAMEWORK instead
 ERROR_ANALYSIS_COT = ERROR_ANALYSIS_FRAMEWORK

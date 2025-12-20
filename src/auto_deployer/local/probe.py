@@ -12,7 +12,7 @@ from typing import Optional
 @dataclass
 class LocalHostFacts:
     """Facts about the local host system."""
-    
+
     hostname: str
     os_name: str  # Windows, Linux, Darwin (macOS)
     os_release: str  # e.g., "Windows 10", "Ubuntu 22.04", "macOS 14.0"
@@ -20,11 +20,12 @@ class LocalHostFacts:
     architecture: str
     python_version: str
     home_dir: str
-    
+
     # 环境特征
     is_container: bool = False  # 是否在容器中运行
     has_systemd: bool = False   # 是否使用 systemd
-    
+    shell_type: str = ""  # PowerShell, CMD, Bash, etc.
+
     # 可用工具
     has_git: bool = False
     has_node: bool = False
@@ -32,10 +33,14 @@ class LocalHostFacts:
     has_python3: bool = False
     has_pip: bool = False
     has_docker: bool = False
-    
+
+    # Windows特定信息
+    is_msys2: bool = False  # 是否在MSYS2环境中
+    python_venv_path: str = ""  # 虚拟环境激活脚本路径 (Scripts/ 或 bin/)
+
     def to_payload(self) -> dict:
         """Convert to dict for LLM context."""
-        return {
+        payload = {
             "hostname": self.hostname,
             "os_name": self.os_name,
             "os_release": self.os_release,
@@ -45,6 +50,7 @@ class LocalHostFacts:
             "home_dir": self.home_dir,
             "is_container": self.is_container,
             "has_systemd": self.has_systemd,
+            "shell_type": self.shell_type,
             "available_tools": {
                 "git": self.has_git,
                 "node": self.has_node,
@@ -55,6 +61,7 @@ class LocalHostFacts:
             },
         }
 
+        
 
 class LocalProbe:
     """Collects information about the local system."""

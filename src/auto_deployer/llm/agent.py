@@ -129,32 +129,38 @@ class DeploymentPlanner:
         """
         logger.info("🧠 Creating deployment plan with LLM...")
         
-        context = {
-            "repo_url": repo_url,
-            "deploy_dir": deploy_dir,
-            "host_info": host_info,
-            "repo_analysis": repo_analysis,
-            "project_type": project_type,
-            "framework": framework,
-            "is_local": is_local,
-        }
         
         # Build planning prompt
         from ..prompts.planning import build_planning_prompt
-        prompt = build_planning_prompt(context)
+
+        # Extract host details for the prompt
+        target_info = "Local machine" if is_local else f"{host_info.get('user', 'unknown')}@{host_info.get('host', 'unknown')}"
+
+        prompt = build_planning_prompt(
+            repo_url=repo_url,
+            deploy_dir=deploy_dir,
+            project_type=project_type or "unknown",
+            framework=framework or "none",
+            repo_analysis=repo_analysis or "No analysis available",
+            target_info=target_info,
+            host_details=f"# Host Details\n{json.dumps(host_info, indent=2, ensure_ascii=False)}"
+        )
         
         # Call LLM
         try:
-            messages = [{"role": "user", "content": prompt}]
             response = self.llm_provider.generate_response(
-                messages=messages,
-                temperature=0.0,
+                prompt=prompt,
+                system_prompt=None,
+                response_format="json",
                 timeout=self.planning_timeout,
             )
             
             if not response:
                 logger.error("Empty response from LLM")
                 return None
+            
+            # Debug: Log the raw response
+            logger.debug("Raw LLM response (first 500 chars): %s", response[:500])
             
             # Parse the plan
             plan = self._parse_plan(response)
@@ -182,14 +188,22 @@ class DeploymentPlanner:
             json_str = llm_response[start_idx:end_idx]
             data = json.loads(json_str)
             
+            # Handle nested plan structure (some LLMs return {reasoning: {...}, plan: {...}})
+            if "plan" in data and isinstance(data["plan"], dict):
+                plan_data = data["plan"]
+            else:
+                plan_data = data
+            
             # Validate required fields
-            if "strategy" not in data or "steps" not in data:
+            if "strategy" not in plan_data or "steps" not in plan_data:
                 logger.error("Missing required fields (strategy, steps) in plan")
+                logger.error("Received keys: %s", list(plan_data.keys()))
+                logger.error("Response preview: %s", json_str[:500])
                 return None
             
             # Parse steps
             steps = []
-            for step_data in data["steps"]:
+            for step_data in plan_data["steps"]:
                 step = DeploymentStep(
                     id=step_data["id"],
                     name=step_data["name"],
@@ -202,12 +216,12 @@ class DeploymentPlanner:
                 steps.append(step)
             
             plan = DeploymentPlan(
-                strategy=data["strategy"],
-                components=data.get("components", []),
+                strategy=plan_data["strategy"],
+                components=plan_data.get("components", []),
                 steps=steps,
-                risks=data.get("risks", []),
-                notes=data.get("notes", []),
-                estimated_time=data.get("estimated_time", ""),
+                risks=plan_data.get("risks", []),
+                notes=plan_data.get("notes", []),
+                estimated_time=plan_data.get("estimated_time", ""),
             )
             
             return plan

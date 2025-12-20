@@ -3,7 +3,11 @@
     "allow": [
       "Bash(py -3.12 -m pytest:*)",
       "Bash(py -3.12:*)",
-      "Bash(Remove-Item -Path \"D:\\Auto-Deployer\\Auto-Deployer\\src\\auto_deployer\\orchestrator\\prompts.py\" -Force)"
+      "Bash(Remove-Item -Path \"D:\\Auto-Deployer\\Auto-Deployer\\src\\auto_deployer\\orchestrator\\prompts.py\" -Force)",
+      "Bash(find:*)",
+      "Bash(del:*)",
+      "Bash(cp:*)",
+      "Bash(python:*)"
     ]
   }
 }
