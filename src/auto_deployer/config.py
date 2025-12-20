@@ -75,6 +75,9 @@ class AgentConfig:
     planning_timeout: int = 60            # 规划超时（秒）
     # 执行模式
     use_orchestrator: bool = True          # 使用新的 Orchestrator 模式（步骤独立执行）
+    # 上下文压缩配置
+    compression_threshold: float = 0.5     # Token使用达到50%时压缩
+    compression_keep_ratio: float = 0.3    # 保留最近30%的命令
 
 
 @dataclass

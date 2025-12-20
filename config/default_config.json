@@ -53,7 +53,9 @@
     "max_iterations": 180,
     "max_iterations_per_step": 30,
     "require_plan_approval": false,
-    "planning_timeout": 60
+    "planning_timeout": 60,
+    "compression_threshold": 0.5,
+    "compression_keep_ratio": 0.3
   },
   "deployment": {
     "workspace_root": ".auto-deployer/workspace",

@@ -322,15 +322,15 @@ class DeploymentOrchestrator:
             "category": step.category,
             "status": result.status.value,
             "iterations": step_ctx.iteration,
+            "compressed": step_ctx.compressed_history is not None,
+            "compressed_history": step_ctx.compressed_history if step_ctx.compressed_history else None,
             "commands": [
                 {
                     "command": c.command,
-                    "reasoning": getattr(c, '_reasoning', None),  # 添加reasoning
                     "success": c.success,
                     "exit_code": c.exit_code,
-                    "extracted_output": getattr(c, '_extracted_output', None),  # 提取后的输出
-                    "stdout": getattr(c, '_original_stdout', c.stdout[:1000] if c.stdout else ""),  # 原始输出（截断）
-                    "stderr": getattr(c, '_original_stderr', c.stderr[:500] if c.stderr else ""),  # 原始错误（截断）
+                    "stdout": c.stdout[:1000] if c.stdout and len(c.stdout) > 1000 else c.stdout,
+                    "stderr": c.stderr[:500] if c.stderr and len(c.stderr) > 500 else c.stderr,
                     "timestamp": c.timestamp,
                 }
                 for c in step_ctx.commands

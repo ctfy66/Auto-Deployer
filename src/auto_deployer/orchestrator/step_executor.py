@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import platform
+from datetime import datetime
 from typing import Optional, Union, TYPE_CHECKING
 
 from .models import (
@@ -12,7 +13,6 @@ from .models import (
     CommandRecord, StepStatus, DeployContext, StepOutputs, ExecutionSummary
 )
 from .prompts import build_step_system_prompt, build_step_user_prompt
-from ..llm.output_extractor import CommandOutputExtractor
 
 if TYPE_CHECKING:
     from ..ssh import SSHSession
@@ -51,11 +51,13 @@ class StepExecutor:
         self.llm_provider = create_llm_provider(llm_config)
         logger.info("StepExecutor using LLM provider: %s (model: %s)", llm_config.provider, llm_config.model)
 
-        # 输出提取器
-        self.output_extractor = CommandOutputExtractor(
-            max_success_lines=30,
-            max_error_lines=50
-        )
+        # Initialize token manager and history compressor
+        from ..llm.token_manager import TokenManager
+        from ..llm.history_compressor import HistoryCompressor
+        
+        self.token_manager = TokenManager(llm_config.provider, llm_config.model)
+        self.history_compressor = HistoryCompressor(self.llm_provider)
+        
     def execute(
         self,
         step_ctx: StepContext,
@@ -177,7 +179,7 @@ class StepExecutor:
                 repo_url=deploy_ctx.repo_url,
                 deploy_dir=deploy_ctx.deploy_dir,
                 host_info=json.dumps(deploy_ctx.host_info, indent=2, ensure_ascii=False),
-                commands_history=self._format_commands(step_ctx.commands),
+                commands_history=self._format_commands(step_ctx),
                 user_interactions=self._format_interactions(step_ctx.user_interactions),
                 max_iterations=self.max_iterations,
                 current_iteration=step_ctx.iteration,
@@ -192,12 +194,50 @@ class StepExecutor:
                 repo_url=deploy_ctx.repo_url,
                 deploy_dir=deploy_ctx.deploy_dir,
                 host_info=json.dumps(deploy_ctx.host_info, indent=2, ensure_ascii=False),
-                commands_history=self._format_commands(step_ctx.commands),
+                commands_history=self._format_commands(step_ctx),
                 user_interactions=self._format_interactions(step_ctx.user_interactions),
                 max_iterations=self.max_iterations,
                 current_iteration=step_ctx.iteration,
                 os_type="linux",
             )
+        
+        # 检查token使用量，如果达到阈值则触发压缩
+        if self.token_manager.should_compress(prompt, threshold=0.5):
+            logger.info("   🔄 Token threshold reached, compressing command history...")
+            step_ctx = self._compress_step_history(step_ctx)
+            
+            # 重新构建prompt
+            if self.is_windows:
+                prompt = build_step_execution_prompt_windows(
+                    step_id=step_ctx.step_id,
+                    step_name=step_ctx.step_name,
+                    category=step_ctx.category,
+                    goal=step_ctx.goal,
+                    success_criteria=step_ctx.success_criteria,
+                    repo_url=deploy_ctx.repo_url,
+                    deploy_dir=deploy_ctx.deploy_dir,
+                    host_info=json.dumps(deploy_ctx.host_info, indent=2, ensure_ascii=False),
+                    commands_history=self._format_commands(step_ctx),
+                    user_interactions=self._format_interactions(step_ctx.user_interactions),
+                    max_iterations=self.max_iterations,
+                    current_iteration=step_ctx.iteration,
+                )
+            else:
+                prompt = build_step_execution_prompt(
+                    step_id=step_ctx.step_id,
+                    step_name=step_ctx.step_name,
+                    category=step_ctx.category,
+                    goal=step_ctx.goal,
+                    success_criteria=step_ctx.success_criteria,
+                    repo_url=deploy_ctx.repo_url,
+                    deploy_dir=deploy_ctx.deploy_dir,
+                    host_info=json.dumps(deploy_ctx.host_info, indent=2, ensure_ascii=False),
+                    commands_history=self._format_commands(step_ctx),
+                    user_interactions=self._format_interactions(step_ctx.user_interactions),
+                    max_iterations=self.max_iterations,
+                    current_iteration=step_ctx.iteration,
+                    os_type="linux",
+                )
         
         # 调用 LLM
         response_text = self._call_llm(prompt)
@@ -254,54 +294,39 @@ class StepExecutor:
             )
     
     def _execute_command(self, command: str, reasoning: Optional[str] = None) -> CommandRecord:
-        """执行命令并智能提取输出"""
+        """执行命令并保存完整输出"""
         try:
             result = self.session.run(command, timeout=600, idle_timeout=60)
 
-            # 使用智能提取器处理输出
-            extracted = self.output_extractor.extract(
-                stdout=result.stdout or "",
-                stderr=result.stderr or "",
-                success=result.ok,
-                exit_code=result.exit_status,
-                command=command
-            )
-
-            # 格式化为LLM可读的输出
-            formatted_output = self.output_extractor.format_for_llm(extracted)
-
-            # 打印到终端 - 显示提取后的输出
-            print("\n" + "=" * 60)
-            print("📤 LLM将看到的提取后输出:")
-            print("-" * 60)
-            print(formatted_output)
-            print("=" * 60 + "\n")
-
-            # 记录到日志
-            logger.info(f"Extracted output for LLM (original: {extracted.full_length} chars, extracted: {extracted.extracted_length} chars):")
-            logger.info(f"Summary: {extracted.summary}")
-            if extracted.key_info:
-                logger.debug(f"Key info: {extracted.key_info[:5]}")  # 只记录前5条
-
-            # 返回包含提取后输出和reasoning的CommandRecord
-            # 注意：CommandRecord需要扩展以支持reasoning和extracted_output字段
+            # 直接使用完整输出，不再提取
             record = CommandRecord(
                 command=command,
                 success=result.ok,
                 exit_code=result.exit_status,
-                # 使用提取后的输出替代原始截断输出
-                stdout=formatted_output,
-                stderr="",  # 错误已整合到stdout的格式化输出中
-                timestamp=extracted.summary if hasattr(extracted, 'summary') else ""
+                stdout=result.stdout or "",
+                stderr=result.stderr or "",
+                timestamp=datetime.now().isoformat()
             )
             
-            # 临时存储额外信息（用于日志记录）
-            record._reasoning = reasoning  # type: ignore
-            record._extracted_output = formatted_output  # type: ignore
-            record._original_stdout = result.stdout[:2000] if result.stdout else ""  # type: ignore
-            record._original_stderr = result.stderr[:2000] if result.stderr else ""  # type: ignore
+            # 日志输出（可选择性截断显示）
+            logger.info(f"Command executed: {command}")
+            logger.info(f"Exit code: {result.exit_status}")
+            
+            # 只在终端显示简短摘要
+            if result.stdout and len(result.stdout) < 500:
+                logger.debug(f"stdout preview: {result.stdout[:500]}")
+            elif result.stdout:
+                logger.debug(f"stdout: {len(result.stdout)} characters")
+            
+            if result.stderr:
+                if not result.ok:
+                    # 失败时显示错误
+                    logger.warning(f"stderr: {result.stderr[:500]}")
+                else:
+                    logger.debug(f"stderr: {len(result.stderr)} characters")
             
             return record
+            
         except Exception as e:
             logger.error(f"Command execution error: {e}")
             return CommandRecord(
@@ -310,7 +335,7 @@ class StepExecutor:
                 exit_code=-1,
                 stdout="",
                 stderr=str(e),
-                timestamp=""
+                timestamp=datetime.now().isoformat()
             )
     
     def _ask_user(self, action: StepAction) -> dict:
@@ -330,22 +355,72 @@ class StepExecutor:
             "cancelled": response.cancelled,
         }
     
-    def _format_commands(self, commands: list) -> str:
-        """格式化命令历史"""
-        if not commands:
-            return "(no commands executed yet)"
+    def _compress_step_history(self, step_ctx: StepContext) -> StepContext:
+        """压缩当前步骤的命令历史
         
+        保留最近30%的命令，压缩较远的70%
+        """
+        total_commands = len(step_ctx.commands)
+        if total_commands < 10:
+            # 命令太少不压缩
+            logger.debug(f"   Skipping compression: only {total_commands} commands")
+            return step_ctx
+        
+        # 保留最近30%（至少保留3条）
+        keep_count = max(3, int(total_commands * 0.3))
+        recent_commands = step_ctx.commands[-keep_count:]
+        old_commands = step_ctx.commands[:-keep_count]
+        
+        logger.debug(f"   Compressing {len(old_commands)} commands, keeping {len(recent_commands)} recent")
+        
+        # 调用LLM压缩
+        try:
+            compressed_text = self.history_compressor.compress(
+                commands=old_commands,
+                step_name=step_ctx.step_name,
+                step_goal=step_ctx.goal,
+            )
+            
+            # 更新上下文
+            step_ctx.compressed_history = compressed_text
+            step_ctx.commands = recent_commands
+            
+            logger.info(f"   ✓ History compressed: {len(old_commands)} commands → {len(compressed_text)} chars")
+        except Exception as e:
+            logger.error(f"   ✗ Compression failed: {e}, keeping all commands")
+        
+        return step_ctx
+    
+    def _format_commands(self, step_ctx: StepContext) -> str:
+        """格式化命令历史（支持压缩）"""
         lines = []
-        for i, cmd in enumerate(commands[-5:], 1):  # 最近5条
-            status = "SUCCESS" if cmd.success else "FAILED"
-            lines.append(f"{i}. [{status}] {cmd.command}")
-            if cmd.stdout:
-                # 截取输出
-                stdout_preview = cmd.stdout[:300].replace('\n', '\n   ')
-                lines.append(f"   stdout: {stdout_preview}")
-            if cmd.stderr and not cmd.success:
-                stderr_preview = cmd.stderr[:200].replace('\n', '\n   ')
-                lines.append(f"   stderr: {stderr_preview}")
+        
+        # 如果有压缩历史，先添加
+        if step_ctx.compressed_history:
+            lines.append("=== Earlier Commands (Compressed) ===")
+            lines.append(step_ctx.compressed_history)
+            lines.append("")
+            lines.append("=== Recent Commands (Full Detail) ===")
+        
+        # 添加最近的完整命令
+        if not step_ctx.commands:
+            lines.append("(no recent commands)")
+        else:
+            for i, cmd in enumerate(step_ctx.commands, 1):
+                status = "SUCCESS" if cmd.success else f"FAILED"
+                lines.append(f"{i}. [{status}] {cmd.command}")
+                
+                # 完整输出，不再截断
+                if cmd.stdout:
+                    lines.append(f"   stdout:")
+                    for line in cmd.stdout.split('\n'):
+                        lines.append(f"     {line}")
+                
+                if cmd.stderr:
+                    lines.append(f"   stderr:")
+                    for line in cmd.stderr.split('\n'):
+                        lines.append(f"     {line}")
+        
         return "\n".join(lines)
     
     def _format_interactions(self, interactions: list) -> str:

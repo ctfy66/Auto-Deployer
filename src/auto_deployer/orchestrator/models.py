@@ -200,6 +200,9 @@ class StepContext:
     commands: List[CommandRecord] = field(default_factory=list)
     user_interactions: List[Dict] = field(default_factory=list)
     
+    # 压缩后的历史记录（当token达到阈值时触发）
+    compressed_history: Optional[str] = None
+    
     # 输出（传递给下游步骤）- 保留旧字段兼容性
     outputs: Dict[str, Any] = field(default_factory=dict)
     

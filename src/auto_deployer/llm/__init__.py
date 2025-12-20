@@ -8,6 +8,8 @@ from .anthropic import AnthropicProvider
 from .deepseek import DeepSeekProvider
 from .openrouter import OpenRouterProvider
 from .openai_compatible import OpenAICompatibleProvider
+from .token_manager import TokenManager
+from .history_compressor import HistoryCompressor
 
 __all__ = [
     # Planning
@@ -23,4 +25,7 @@ __all__ = [
     "DeepSeekProvider",
     "OpenRouterProvider",
     "OpenAICompatibleProvider",
+    # Context management
+    "TokenManager",
+    "HistoryCompressor",
 ]
