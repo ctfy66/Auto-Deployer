@@ -183,7 +183,7 @@ python -m tests.run_tests --docker
 
 ### 命令行选项
 
-**Windows**：
+**基本选项**：
 
 ```powershell
 # 只测试指定项目（本地模式）
@@ -197,6 +197,34 @@ py -3.12 -m tests.run_tests --project myblog-vitepress --docker
 
 # 使用自定义配置文件
 py -3.12 -m tests.run_tests --config config/my_config.json --local
+```
+
+**并行测试选项（新功能）**：
+
+```powershell
+# 并行测试所有项目（默认3个worker）
+python -m tests.real_deployment.test_suite --parallel --local
+
+# 指定并行度（同时运行5个项目）
+python -m tests.real_deployment.test_suite --parallel --workers 5 --local
+
+# 并行测试指定难度
+python -m tests.real_deployment.test_suite --parallel --difficulty easy --local
+
+# 禁用失败重试
+python -m tests.real_deployment.test_suite --parallel --no-retry --local
+
+# 只并行测试指定项目
+python -m tests.real_deployment.test_suite --parallel --project docker-welcome --local
+```
+
+**并行测试说明**：
+
+- `--parallel`: 启用并行测试模式
+- `--workers N`: 设置并行worker数量（默认3，建议3-5）
+- `--no-retry`: 禁用失败自动重试（默认会重试1次）
+- 并行测试会生成增强的报告，包含系统信息、LLM配置、重试统计等详细信息
+- 测试结果保存在 `tests/results/reports/parallel_test_report_*.json` 和 `*.md`
 
 # 跳过环境设置（调试模式，需要手动提供环境）
 py -3.12 -m tests.run_tests --skip-setup

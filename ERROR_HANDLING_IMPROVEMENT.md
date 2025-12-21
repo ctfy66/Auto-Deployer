@@ -32,6 +32,7 @@
 8. **构建/编译错误**：依赖缺失、语法错误、环境变量未设置
 
 每种错误都提供了：
+
 - 错误特征识别
 - 可能的原因
 - 建议的解决方案
@@ -52,6 +53,7 @@
 **核心原则**：不使用阻塞命令（`-f`, `--follow`），使用后台执行 + 渐进式等待
 
 **等待策略**：
+
 - 步骤 1：启动后台进程
 - 步骤 2：等待 30-60 秒，检查状态
 - 步骤 3：等待 2-3 分钟，再次检查
@@ -59,6 +61,7 @@
 - 步骤 5：总计 15 分钟后仍未就绪 → 可能失败
 
 **平台特定命令**：
+
 - Windows: `Start-Process -NoNewWindow`, `Start-Sleep`, `Get-Process`
 - Linux: `nohup`, `sleep`, `ps aux`
 - Docker: `docker compose up -d`, `docker logs --tail 50 --since 2m`
@@ -66,6 +69,7 @@
 #### 2.4 何时放弃的判断标准 (When to Give Up)
 
 **应该声明 step_failed 的情况**（5 大类）：
+
 1. 重复失败：相同命令失败 3 次以上
 2. 根本性问题：仓库不存在、工具无法安装、系统限制
 3. 需要用户输入：配置决策、凭证/API 密钥（应使用 ask_user）
@@ -73,12 +77,14 @@
 5. 不可恢复错误：文件系统损坏、架构不兼容、依赖冲突
 
 **不应该放弃的情况**（4 大类）：
+
 1. 首次失败
 2. 服务启动中且日志显示进展
 3. 可修复的问题（权限、端口、缺失文件、目录冲突）
 4. 迭代预算充足（如只用了 5/30 次）
 
 **黄金法则**：
+
 - 是否识别了根本原因？
 - 是否尝试了适当的修复？
 - 还有其他可尝试的方法吗？
@@ -88,6 +94,7 @@
 ### 3. 平台特定诊断
 
 **Windows 特定**：
+
 - Docker Desktop 检查：`Get-Process "Docker Desktop"`
 - 服务管理：`Get-Service`, `Start-Service`
 - 路径操作：`Test-Path`，注意反斜杠转义
@@ -95,6 +102,7 @@
 - 端口检查：`Get-NetTCPConnection -LocalPort`
 
 **Linux 特定**：
+
 - 权限：`sudo`, `chmod`, `chown`
 - 服务管理：`systemctl`, `service`
 - 进程检查：`ps aux`, `pgrep`
@@ -104,6 +112,7 @@
 ### 4. 集成到系统提示词
 
 修改了 `build_step_system_prompt()` 函数：
+
 - 在"Current Step"部分之后
 - 在"Instructions"部分之前
 - 插入完整的错误诊断指南
@@ -133,14 +142,14 @@
 
 基于 `deploy_BuildingAI_20251221_151759.json` 日志分析的实际错误：
 
-| 错误类型 | 原有覆盖 | 现在覆盖 |
-|---------|---------|---------|
-| `fatal: destination path ... already exists` | ❌ | ✅ Git 错误 #1 |
-| `找不到路径 .env.example` | ❌ | ✅ 文件系统错误 #1 |
-| `failed to connect to docker API pipe` | 部分 | ✅ 服务连接错误 #3 + Windows 特定 |
-| `error while creating mount source path` | ❌ | ✅ Docker 错误 #3 |
-| `IDLE_TIMEOUT`, `TOTAL_TIMEOUT` | ❌ | ✅ 超时错误 #7 + 渐进式策略 |
-| 重复 30 次无效命令 | ❌ | ✅ 何时放弃 #1 |
+| 错误类型                                     | 原有覆盖 | 现在覆盖                          |
+| -------------------------------------------- | -------- | --------------------------------- |
+| `fatal: destination path ... already exists` | ❌       | ✅ Git 错误 #1                    |
+| `找不到路径 .env.example`                    | ❌       | ✅ 文件系统错误 #1                |
+| `failed to connect to docker API pipe`       | 部分     | ✅ 服务连接错误 #3 + Windows 特定 |
+| `error while creating mount source path`     | ❌       | ✅ Docker 错误 #3                 |
+| `IDLE_TIMEOUT`, `TOTAL_TIMEOUT`              | ❌       | ✅ 超时错误 #7 + 渐进式策略       |
+| 重复 30 次无效命令                           | ❌       | ✅ 何时放弃 #1                    |
 
 ## 后续建议
 

@@ -21,6 +21,11 @@ from .deployment_tester import DeploymentTester
 from .metrics_collector import MetricsCollector, ProjectMetrics
 from .report_generator import ReportGenerator
 
+# 新增：并行测试模块
+from .parallel_runner import ParallelTestRunner
+from .enhanced_metrics import EnhancedProjectMetrics, SystemInfoCollector
+from .enhanced_report_generator import EnhancedReportGenerator
+
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
@@ -202,6 +207,158 @@ def run_test_suite(
     return results, summary
 
 
+def run_parallel_test_suite(
+    config_path: Optional[str] = None,
+    project_filter: Optional[str] = None,
+    difficulty_filter: Optional[str] = None,
+    skip_setup: bool = False,
+    local_mode: bool = True,
+    max_workers: int = 3,
+    retry_on_failure: bool = True,
+    retry_max_attempts: int = 1
+) -> tuple[List[EnhancedProjectMetrics], Dict[str, Any]]:
+    """
+    运行并行测试套件
+    
+    Args:
+        config_path: 配置文件路径（可选）
+        project_filter: 项目名称过滤（可选）
+        difficulty_filter: 难度过滤（可选）
+        skip_setup: 跳过环境设置（用于调试）
+        local_mode: 使用本地测试模式（True=本地，False=Docker容器）
+        max_workers: 最大并行worker数（默认3）
+        retry_on_failure: 是否在失败时重试（默认True）
+        retry_max_attempts: 最大重试次数（默认1，即最多尝试2次）
+        
+    Returns:
+        (结果列表, 报告摘要) 元组
+    """
+    # 1. 加载配置
+    logger.info("🚀 开始并行真实部署测试套件")
+    
+    # 显示测试模式
+    mode_name = "本地测试模式 🏠" if local_mode else "Docker 容器测试模式 🐳"
+    logger.info(f"   测试模式: {mode_name}")
+    logger.info(f"   并行度: {max_workers} workers")
+    
+    try:
+        if config_path:
+            config = load_config(config_path)
+        else:
+            config = load_config()
+    except FileNotFoundError:
+        logger.warning("⚠️  配置文件不存在，使用代码默认值")
+        config = AppConfig()
+    
+    logger.info(f"   使用模型: {config.llm.model}")
+    logger.info(f"   温度: {config.llm.temperature}")
+    
+    # 2. 筛选测试项目
+    if project_filter:
+        projects = [p for p in TEST_PROJECTS if p.name == project_filter and not p.skip]
+        if not projects:
+            logger.error(f"❌ 未找到项目: {project_filter}")
+            return [], {}
+    elif difficulty_filter:
+        projects = get_projects_by_difficulty(difficulty_filter)
+        logger.info(f"   筛选难度: {difficulty_filter}")
+    else:
+        projects = get_all_projects()
+    
+    if not projects:
+        logger.error("❌ 没有可测试的项目")
+        return [], {}
+    
+    logger.info(f"   测试项目数: {len(projects)}")
+    for p in projects:
+        logger.info(f"     - {p.name} ({p.difficulty})")
+    logger.info("")
+    
+    # 3. 创建测试环境（如果需要）
+    env_config = None
+    
+    if local_mode:
+        # 本地测试模式，不需要特殊环境配置
+        env_config = {"mode": "local"}
+        logger.info("🏠 使用本地测试环境")
+    else:
+        # Docker 容器测试模式
+        env = TestEnvironment()
+        logger.info("🐳 使用 Docker 容器测试环境")
+        
+        if not skip_setup:
+            try:
+                env_config = env.setup()
+            except Exception as e:
+                logger.error(f"❌ 环境设置失败: {e}")
+                return [], {}
+        else:
+            logger.warning("⚠️  跳过环境设置（调试模式）")
+            env_config = {
+                "host": "localhost",
+                "port": 2222,
+                "username": "root",
+                "password": "testpass"
+            }
+    
+    # 4. 创建并行测试运行器
+    test_start_time = datetime.now()
+    
+    runner = ParallelTestRunner(
+        config=config,
+        max_workers=max_workers,
+        retry_on_failure=retry_on_failure,
+        retry_max_attempts=retry_max_attempts
+    )
+    
+    # 5. 运行所有测试
+    results = runner.run_tests(
+        projects=projects,
+        env_config=env_config,
+        local_mode=local_mode
+    )
+    
+    test_end_time = datetime.now()
+    
+    # 6. 生成报告
+    report_gen = EnhancedReportGenerator()
+    
+    # 生成JSON报告
+    json_report = report_gen.generate_enhanced_json_report(
+        results=results,
+        test_start_time=test_start_time,
+        test_end_time=test_end_time,
+        parallel_workers=max_workers
+    )
+    
+    # 聚合指标
+    summary = report_gen._aggregate_enhanced_metrics(results)
+    
+    # 生成Markdown报告
+    md_report = report_gen.generate_enhanced_markdown_report(
+        results=results,
+        summary=summary,
+        test_start_time=test_start_time,
+        test_end_time=test_end_time
+    )
+    
+    logger.info(f"\n📊 测试报告已保存:")
+    logger.info(f"   JSON: {json_report}")
+    logger.info(f"   Markdown: {md_report}")
+    
+    # 7. 打印摘要
+    system_info = SystemInfoCollector.collect_system_info() if results else None
+    report_gen.print_enhanced_summary(summary, system_info)
+    
+    # 8. 清理环境
+    if not local_mode and not skip_setup:
+        env.cleanup()
+    
+    return results, summary
+    
+    return results, summary
+
+
 def main():
     """命令行入口"""
     import argparse
@@ -241,6 +398,23 @@ def main():
         action="store_true",
         help="使用 Docker 容器测试模式（需要完全隔离时使用）"
     )
+    # 新增：并行测试参数
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="使用并行测试模式（默认3个worker）"
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=3,
+        help="并行worker数量（默认3，建议3-5）"
+    )
+    parser.add_argument(
+        "--no-retry",
+        action="store_true",
+        help="禁用失败重试"
+    )
     
     args = parser.parse_args()
     
@@ -249,13 +423,30 @@ def main():
     local_mode = not args.docker or args.local
     
     try:
-        results, summary = run_test_suite(
-            config_path=args.config,
-            project_filter=args.project,
-            difficulty_filter=args.difficulty,
-            skip_setup=args.skip_setup,
-            local_mode=local_mode
-        )
+        # 根据 --parallel 参数选择运行模式
+        if args.parallel:
+            # 并行测试模式
+            logger.info("🚀 使用并行测试模式")
+            results, summary = run_parallel_test_suite(
+                config_path=args.config,
+                project_filter=args.project,
+                difficulty_filter=args.difficulty,
+                skip_setup=args.skip_setup,
+                local_mode=local_mode,
+                max_workers=args.workers,
+                retry_on_failure=not args.no_retry,
+                retry_max_attempts=1  # 重试1次
+            )
+        else:
+            # 顺序测试模式（原有模式）
+            logger.info("🚀 使用顺序测试模式")
+            results, summary = run_test_suite(
+                config_path=args.config,
+                project_filter=args.project,
+                difficulty_filter=args.difficulty,
+                skip_setup=args.skip_setup,
+                local_mode=local_mode
+            )
         
         # 设置退出码
         success_rate = summary.get("success_rate", 0)

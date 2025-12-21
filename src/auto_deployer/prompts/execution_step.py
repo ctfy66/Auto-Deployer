@@ -5,7 +5,7 @@ optimized for clarity and efficiency while maintaining functionality.
 """
 
 def get_simplified_error_guide() -> str:
-    """Get concise error diagnosis guide."""
+    """Get comprehensive error diagnosis guide with timeout strategies."""
     return """
 # 🔍 Error Diagnosis
 
@@ -16,10 +16,131 @@ When commands fail:
    - "EADDRINUSE" + port → Port conflict
    - "permission denied" → Need sudo/permissions
    - "command not found" → Install missing tool
+   - **"IDLE_TIMEOUT"** → Command waiting for input OR no output
+   - **"TOTAL_TIMEOUT"** → Command took too long (>600s)
 3. **Fix before retry** - Don't repeat the same failed command
 4. **Platform specifics**:
    - Linux: Use `systemctl status`, `sudo`
    - Windows: Check services, named pipes (//./pipe/*)
+
+# ⚠️ TIMEOUT ERRORS - CRITICAL GUIDANCE
+
+**If you see IDLE_TIMEOUT or TOTAL_TIMEOUT in stderr:**
+
+This means you used a BLOCKING command (like `docker logs -f`) or didn't wait long enough for a long-running process.
+
+❌ **NEVER do this:**
+- Use `docker logs -f` or `--follow` (causes blocking → timeout)
+- Use `tail -f` or any following/watching commands
+- Repeatedly check logs without waiting between checks
+- Expect instant results from build/install operations
+
+✅ **ALWAYS do this - Progressive Waiting Strategy:**
+
+**For Docker containers doing builds/installs:**
+```
+1. Start container: docker compose up -d
+2. WAIT 60-90 seconds: sleep 60 (or Start-Sleep -Seconds 60)
+3. Check briefly: docker logs container_name --tail 20
+4. If still building, WAIT 120-180 seconds: sleep 120
+5. Check again: docker logs container_name --tail 30
+6. If still building, WAIT 300 seconds (5 min): sleep 300
+7. Check final status: docker logs container_name --tail 50
+```
+
+**For direct npm/pnpm/pip installs (background):**
+```
+Windows:
+1. Start: Start-Process -NoNewWindow -FilePath "npm" -ArgumentList "install"
+2. WAIT 60s: Start-Sleep -Seconds 60
+3. Check: Get-Process npm
+
+Linux:
+1. Start: nohup npm install > install.log 2>&1 &
+2. WAIT 60s: sleep 60
+3. Check: tail -20 install.log
+```
+
+**Key Rules:**
+- **WAIT FIRST, CHECK LATER** - Don't spam log checks
+- Start with 60-90s wait for first check
+- Gradually increase wait time: 60s → 120s → 180s → 300s
+- Use `--tail 20` for logs (avoid huge output)
+- Maximum reasonable wait: 15 minutes for complex builds
+
+# 🔨 BUILD/INSTALL Operations - Special Handling
+
+**For steps involving: npm install, pnpm install, docker build, pip install, cargo build, etc.**
+
+These operations typically take **2-10 minutes**. You MUST use progressive waiting.
+
+**Mandatory Workflow:**
+
+1️⃣ **Start process in background/detached mode**
+   - Docker: `docker compose up -d`
+   - Windows PowerShell: `Start-Process -NoNewWindow ...`
+   - Linux: `nohup command > output.log 2>&1 &`
+
+2️⃣ **Wait minimum 60 seconds before first check**
+   ```
+   sleep 60  (Linux)
+   Start-Sleep -Seconds 60  (Windows)
+   ```
+
+3️⃣ **Check status briefly (not continuously)**
+   ```
+   docker logs container_name --tail 20
+   ```
+
+4️⃣ **Analyze output, if still in progress:**
+   - Look for: "downloaded X/Y", "installed X packages", "Building..."
+   - These indicate progress → WAIT MORE
+
+5️⃣ **Wait progressively longer (2-3 minutes)**
+   ```
+   sleep 120
+   ```
+
+6️⃣ **Check again**
+   ```
+   docker logs container_name --tail 30 --since 2m
+   ```
+
+7️⃣ **If still not done, wait 5 minutes**
+   ```
+   sleep 300
+   ```
+
+8️⃣ **Final check**
+   - If completed: Verify and declare step_done
+   - If still building but showing progress: Wait another 5 min
+   - If errors or no progress for 15 min: Diagnose and fix
+
+**CORRECT PATTERN Example:**
+```json
+{"action": "execute", "command": "docker compose up -d"}
+{"action": "execute", "command": "Start-Sleep -Seconds 90"}
+{"action": "execute", "command": "docker logs buildingai-nodejs --tail 20"}
+{"action": "execute", "command": "Start-Sleep -Seconds 180"}
+{"action": "execute", "command": "docker logs buildingai-nodejs --tail 30"}
+{"action": "execute", "command": "Start-Sleep -Seconds 300"}
+{"action": "execute", "command": "docker logs buildingai-nodejs --tail 50"}
+```
+
+**WRONG PATTERN (causes timeouts and wastes iterations):**
+```json
+{"action": "execute", "command": "docker logs -f container"}  ❌ BLOCKS! TIMEOUT!
+{"action": "execute", "command": "docker logs container --tail 20"}
+{"action": "execute", "command": "docker logs container --tail 20"}  ❌ No wait!
+{"action": "execute", "command": "docker logs container --tail 20"}  ❌ Spam!
+{"action": "execute", "command": "docker logs container --tail 20"}  ❌ Spam!
+```
+
+**Remember:**
+- Build processes need TIME, not constant monitoring
+- Patience is essential for successful deployment
+- Each log check should be preceded by an appropriate wait
+- If you see progress indicators, keep waiting
 """
 
 
