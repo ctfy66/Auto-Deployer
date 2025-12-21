@@ -1,14 +1,14 @@
 # 真实部署测试套件
 
-这是Auto-Deployer的真实部署测试套件，使用真实LLM测试Agent的部署能力。
+这是 Auto-Deployer 的真实部署测试套件，使用真实 LLM 测试 Agent 的部署能力。
 
 ## 概述
 
-本测试套件通过以下方式评估Agent：
+本测试套件通过以下方式评估 Agent：
 
-1. **真实LLM测试**：使用真实的Gemini/OpenAI API，测试Agent的智能决策能力
-2. **灵活的测试环境**：支持本地测试模式和Docker容器测试模式
-3. **代表性项目**：使用多个不同类型的项目（Node.js、Python、Docker等）进行测试
+1. **真实 LLM 测试**：使用真实的 Gemini/OpenAI API，测试 Agent 的智能决策能力
+2. **灵活的测试环境**：支持本地测试模式和 Docker 容器测试模式
+3. **代表性项目**：使用多个不同类型的项目（Node.js、Python、Docker 等）进行测试
 4. **量化指标**：收集成功率、耗时、迭代次数等可量化的指标
 
 ## 测试模式
@@ -16,43 +16,51 @@
 ### 🏠 本地测试模式（推荐，默认）
 
 **工作原理**：
+
 - 直接在本地机器上运行部署测试
 - 使用 `LocalSession` 执行命令
 - 无需创建 Docker 容器
 
 **优点**：
+
 - ✅ **无 Docker in Docker 问题**：可以直接测试需要 Docker 的项目
 - ✅ **真实环境**：在真实的开发环境中测试
 - ✅ **架构简单**：无需管理容器生命周期
 - ✅ **支持所有项目类型**：包括 Docker、Node.js、Python 等
 
 **适用场景**：
+
 - 测试需要 Docker 的项目（如 `docker-welcome`）
 - 日常开发和调试
 - CI/CD 环境中的集成测试
 - 快速验证 Agent 功能
 
 **限制**：
+
 - 在本地环境运行，可能受到已安装软件的影响
 - 多次测试可能需要手动清理部署的项目
 
 ### 🐳 Docker 容器测试模式
 
 **工作原理**：
+
 - 创建 Ubuntu Docker 容器作为测试目标
 - 在容器内安装 SSH 服务器
 - Agent 通过 SSH 连接到容器执行部署
 
 **优点**：
+
 - ✅ **完全隔离**：测试环境与宿主机隔离
 - ✅ **可重复**：每次测试使用干净的环境
 
 **限制**：
+
 - ❌ **Docker in Docker 问题**：容器内部署 Docker 项目会遇到问题
 - ❌ **需要 Docker**：必须安装并运行 Docker
 - ❌ **较慢**：创建容器需要额外时间
 
 **适用场景**：
+
 - 需要完全隔离的测试环境
 - 测试不需要 Docker 的传统项目
 - 验证在干净环境中的部署行为
@@ -72,6 +80,7 @@ pip install -e .
 设置 LLM API 密钥：
 
 **Windows (PowerShell)**:
+
 ```powershell
 $env:AUTO_DEPLOYER_GEMINI_API_KEY = "your-key"
 # 或
@@ -79,6 +88,7 @@ $env:AUTO_DEPLOYER_OPENAI_API_KEY = "your-key"
 ```
 
 **Linux/Mac (Bash)**:
+
 ```bash
 export AUTO_DEPLOYER_GEMINI_API_KEY=your-key
 # 或
@@ -88,6 +98,7 @@ export AUTO_DEPLOYER_OPENAI_API_KEY=your-key
 ### 3. 本地测试模式额外要求
 
 根据测试项目类型，可能需要：
+
 - **Git**：克隆仓库
 - **Node.js & npm**：测试 Node.js 项目
 - **Python**：测试 Python 项目
@@ -113,9 +124,9 @@ pip install docker requests
 
 ### 4. 测试项目仓库
 
-**重要**：`test_projects.py`中的仓库URL需要替换为真实的测试仓库。
+**重要**：`test_projects.py`中的仓库 URL 需要替换为真实的测试仓库。
 
-当前配置的仓库URL是示例，需要：
+当前配置的仓库 URL 是示例，需要：
 
 1. 创建测试项目仓库（或使用现有项目）
 2. 更新`test_projects.py`中的`repo_url`字段
@@ -127,6 +138,7 @@ pip install docker requests
 运行所有测试项目（本地模式）：
 
 **Windows（推荐使用 Python Launcher）**：
+
 ```powershell
 # 本地测试模式（默认）
 py -3.12 -m tests.run_tests
@@ -136,11 +148,13 @@ py -3.12 -m tests.run_tests --local
 ```
 
 或使用便捷脚本：
+
 ```powershell
 .\run_tests.ps1
 ```
 
 **Linux/Mac**：
+
 ```bash
 # 本地测试模式（默认）
 python -m tests.run_tests
@@ -154,11 +168,13 @@ python -m tests.run_tests --local
 如果需要完全隔离的测试环境：
 
 **Windows**：
+
 ```powershell
 py -3.12 -m tests.run_tests --docker
 ```
 
 **Linux/Mac**：
+
 ```bash
 python -m tests.run_tests --docker
 ```
@@ -168,6 +184,7 @@ python -m tests.run_tests --docker
 ### 命令行选项
 
 **Windows**：
+
 ```powershell
 # 只测试指定项目（本地模式）
 py -3.12 -m tests.run_tests --project docker-welcome --local
@@ -186,6 +203,7 @@ py -3.12 -m tests.run_tests --skip-setup
 ```
 
 **Linux/Mac**：
+
 ```bash
 # 只测试指定项目（本地模式）
 python -m tests.run_tests --project docker-welcome --local
@@ -208,7 +226,7 @@ python -m tests.run_tests --skip-setup
 测试项目在`test_projects.py`中定义。每个项目包含：
 
 - `name`: 项目名称（唯一标识）
-- `repo_url`: Git仓库URL
+- `repo_url`: Git 仓库 URL
 - `description`: 项目描述
 - `expected_strategy`: 期望的部署策略
 - `difficulty`: 难度（easy/medium/hard）
@@ -250,14 +268,14 @@ TestProject(
 2. **项目部署**：Agent 连接容器并执行部署
 3. **结果验证**：检查部署的应用是否可访问
 4. **指标收集**：从日志中提取各种指标
-5. **报告生成**：生成JSON和Markdown格式的报告
+5. **报告生成**：生成 JSON 和 Markdown 格式的报告
 
 ## 测试报告
 
 测试完成后，报告保存在`tests/results/reports/`目录：
 
-- `test_report_YYYYMMDD_HHMMSS.json` - JSON格式（机器可读）
-- `test_report_YYYYMMDD_HHMMSS.md` - Markdown格式（人类可读）
+- `test_report_YYYYMMDD_HHMMSS.json` - JSON 格式（机器可读）
+- `test_report_YYYYMMDD_HHMMSS.md` - Markdown 格式（人类可读）
 
 ### 报告内容
 
@@ -265,14 +283,14 @@ TestProject(
 
 - **摘要**：总成功率、按难度分类、平均指标
 - **详细结果**：每个项目的详细指标
-- **策略准确率**：Agent选择正确策略的比例
+- **策略准确率**：Agent 选择正确策略的比例
 - **验证通过率**：部署验证通过的比例
 
 ### 关键指标
 
 - **成功率**：部署成功的项目比例
 - **部署时间**：完成部署所需的时间
-- **迭代次数**：Agent的决策次数
+- **迭代次数**：Agent 的决策次数
 - **命令数**：执行的命令总数
 - **策略准确率**：选择正确部署策略的比例
 
@@ -283,6 +301,7 @@ TestProject(
 如果遇到 `ModuleNotFoundError: No module named 'dotenv'` 或其他模块找不到的错误，可能是 Python 环境不一致导致的。
 
 **Windows 快速解决**：
+
 ```powershell
 # 使用 Python Launcher（推荐）
 py -3.12 -m tests.run_tests --difficulty easy
@@ -290,7 +309,7 @@ py -3.12 -m tests.run_tests --difficulty easy
 
 **详细解决方案**：请参考 [故障排查指南](../../docs/troubleshooting.md) 中的"Python 环境不一致问题"部分。
 
-### Docker连接失败
+### Docker 连接失败
 
 **错误信息**：`Error while fetching server API version: (2, 'CreateFile', '系统找不到指定的文件。')`
 
@@ -299,19 +318,23 @@ py -3.12 -m tests.run_tests --difficulty easy
 **解决方案**：
 
 1. **检查 Docker 是否安装**：
+
 ```powershell
 docker version
 ```
 
 如果提示命令找不到，需要安装 Docker Desktop：
+
 - Windows/Mac：下载并安装 [Docker Desktop](https://www.docker.com/products/docker-desktop)
 - Linux：参考 [Docker 官方文档](https://docs.docker.com/engine/install/)
 
 2. **启动 Docker Desktop**（Windows/Mac）：
+
    - 确保 Docker Desktop 已启动
    - 等待任务栏图标变为绿色（表示 Docker 引擎已就绪）
 
 3. **验证 Docker 运行状态**：
+
 ```bash
 # 检查Docker是否运行
 docker ps
@@ -321,20 +344,21 @@ docker info
 ```
 
 4. **临时跳过（仅用于测试）**：
-如果暂时无法安装 Docker，可以使用 `--skip-setup` 跳过环境设置：
+   如果暂时无法安装 Docker，可以使用 `--skip-setup` 跳过环境设置：
+
 ```powershell
 py -3.12 -m tests.run_tests --skip-setup
 ```
 
-### SSH连接失败
+### SSH 连接失败
 
 - 检查容器是否正常运行：`docker ps`
-- 检查SSH端口是否被占用
+- 检查 SSH 端口是否被占用
 - 查看容器日志：`docker logs autodep-test-env`
 
 ### 部署失败
 
-- 查看Agent日志：`agent_logs/deploy_*.json`
+- 查看 Agent 日志：`agent_logs/deploy_*.json`
 - 检查测试项目仓库是否可访问
 - 验证项目配置是否正确
 
@@ -353,6 +377,7 @@ py -3.12 -m tests.run_tests --skip-setup
 
 **问题描述**：
 在 Docker 容器测试模式中，如果测试项目需要 Docker（如 `docker-welcome`），会遇到"Docker in Docker"（DinD）问题：
+
 - 容器内执行 `docker` 命令失败
 - 错误信息：`Cannot connect to Docker daemon` 或 `docker: command not found`
 
@@ -361,19 +386,19 @@ py -3.12 -m tests.run_tests --skip-setup
 
 **解决方案**：
 ✅ **使用本地测试模式**（推荐）：
+
 ```powershell
 # 本地模式可以直接使用宿主机的 Docker
 py -3.12 -m tests.run_tests --project docker-welcome --local
 ```
 
-本地测试模式避免了 DinD 问题，可以直接测试需要 Docker 的项目。
-3. 手动更换其他镜像源（如清华、网易）
+本地测试模式避免了 DinD 问题，可以直接测试需要 Docker 的项目。 3. 手动更换其他镜像源（如清华、网易）
 
-### API调用失败
+### API 调用失败
 
-- 检查API密钥是否正确设置
+- 检查 API 密钥是否正确设置
 - 检查网络连接
-- 查看API配额是否用完
+- 查看 API 配额是否用完
 
 ## 配置
 
@@ -459,4 +484,3 @@ py -3.12 -m tests.run_tests --project docker-welcome --local
 1. 在`test_projects.py`中添加项目配置
 2. 确保项目仓库可公开访问
 3. 更新本文档
-

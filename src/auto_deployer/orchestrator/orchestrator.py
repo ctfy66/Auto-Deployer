@@ -145,7 +145,6 @@ class DeploymentOrchestrator:
                 "compressed_history": None,
                 "commands": [],
                 "user_interactions": [],
-                "outputs": {},
                 "structured_outputs": None,
                 "error": None,
                 "timestamp": datetime.now().isoformat(),
@@ -383,9 +382,6 @@ class DeploymentOrchestrator:
         
         # 更新用户交互
         step_log["user_interactions"] = step_ctx.user_interactions
-        
-        # 更新输出
-        step_log["outputs"] = result.outputs or {}
         
         # 更新结构化输出
         structured_outputs_dict = None
