@@ -62,34 +62,35 @@
 
 #### 部署配置参数
 
-| 参数                       | 说明             | 默认值  |
-| -------------------------- | ---------------- | ------- |
-| `enable_planning`          | 启用规划阶段     | `true`  |
-| `require_plan_approval`    | 需要计划批准     | `false` |
-| `planning_timeout`         | 规划超时（秒）   | `60`    |
-| `loop_detection_enabled`   | 启用循环检测     | `true`  |
+| 参数                     | 说明           | 默认值  |
+| ------------------------ | -------------- | ------- |
+| `enable_planning`        | 启用规划阶段   | `true`  |
+| `require_plan_approval`  | 需要计划批准   | `false` |
+| `planning_timeout`       | 规划超时（秒） | `60`    |
+| `loop_detection_enabled` | 启用循环检测   | `true`  |
 
 #### 交互配置参数
 
-| 参数                         | 说明                           | 默认值 | 可选值                |
-| ---------------------------- | ------------------------------ | ------ | --------------------- |
-| `interaction_enabled`        | 启用用户交互                   | `true` | `true`, `false`       |
-| `interaction_mode`           | 交互模式                       | `cli`  | `cli`, `auto`, `callback` |
-| `auto_retry_on_interaction` | 交互时自动重试                 | `true` | `true`, `false`       |
+| 参数                        | 说明           | 默认值 | 可选值                    |
+| --------------------------- | -------------- | ------ | ------------------------- |
+| `interaction_enabled`       | 启用用户交互   | `true` | `true`, `false`           |
+| `interaction_mode`          | 交互模式       | `cli`  | `cli`, `auto`, `callback` |
+| `auto_retry_on_interaction` | 交互时自动重试 | `true` | `true`, `false`           |
 
 **交互模式说明：**
+
 - `cli`: 交互式命令行（需要用户输入，Actions 中不适用）
 - `auto`: 自动重试模式（遇到交互时自动重试，推荐用于 Actions）
 - `callback`: 回调模式（用于 GUI/Web 集成）
 
 #### 测试执行参数
 
-| 参数              | 说明               | 默认值  |
-| ----------------- | ------------------ | ------- |
-| `parallel_mode`   | 并行测试           | `false` |
-| `max_workers`     | 并行线程数         | `2`     |
-| `skip_setup`      | 跳过环境设置       | `false` |
-| `timeout_minutes` | 整体超时（分钟）   | `120`   |
+| 参数              | 说明             | 默认值  |
+| ----------------- | ---------------- | ------- |
+| `parallel_mode`   | 并行测试         | `false` |
+| `max_workers`     | 并行线程数       | `2`     |
+| `skip_setup`      | 跳过环境设置     | `false` |
+| `timeout_minutes` | 整体超时（分钟） | `120`   |
 
 #### 输出配置参数
 
