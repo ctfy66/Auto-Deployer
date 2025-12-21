@@ -49,6 +49,11 @@ def main():
     planning_timeout = str_to_int(os.getenv('INPUT_PLANNING_TIMEOUT', '60'), 60)
     loop_detection_enabled = str_to_bool(os.getenv('INPUT_LOOP_DETECTION_ENABLED', 'true'))
     
+    # Interaction 配置
+    interaction_enabled = str_to_bool(os.getenv('INPUT_INTERACTION_ENABLED', 'true'))
+    interaction_mode = os.getenv('INPUT_INTERACTION_MODE', 'cli')
+    auto_retry_on_interaction = str_to_bool(os.getenv('INPUT_AUTO_RETRY_ON_INTERACTION', 'true'))
+    
     # 读取默认配置作为基础
     config_dir = Path(__file__).parent.parent.parent / 'config'
     default_config_path = config_dir / 'default_config.json'
@@ -101,6 +106,18 @@ def main():
     
     config['agent']['loop_detection']['enabled'] = loop_detection_enabled
     print(f"   Loop Detection: {loop_detection_enabled}")
+    
+    # 更新 Interaction 配置
+    if 'interaction' not in config:
+        config['interaction'] = {}
+    
+    config['interaction']['enabled'] = interaction_enabled
+    config['interaction']['mode'] = interaction_mode
+    config['interaction']['auto_retry_on_interaction'] = auto_retry_on_interaction
+    
+    print(f"   Interaction Enabled: {interaction_enabled}")
+    print(f"   Interaction Mode: {interaction_mode}")
+    print(f"   Auto Retry On Interaction: {auto_retry_on_interaction}")
     
     # 确保配置目录存在
     config_dir.mkdir(parents=True, exist_ok=True)

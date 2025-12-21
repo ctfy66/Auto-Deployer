@@ -68,6 +68,7 @@
 ### 使用不同 LLM
 
 **OpenAI GPT-4o:**
+
 ```yaml
 LLM 提供商: openai
 LLM 模型: gpt-4o
@@ -75,6 +76,7 @@ LLM 模型: gpt-4o
 ```
 
 **Anthropic Claude:**
+
 ```yaml
 LLM 提供商: anthropic
 LLM 模型: claude-3-5-sonnet-20241022
@@ -84,6 +86,7 @@ LLM 模型: claude-3-5-sonnet-20241022
 ## 📊 查看测试摘要
 
 测试完成后，工作流页面会自动显示摘要，包括：
+
 - ✅ 测试配置信息
 - ✅ 使用的 LLM 模型
 - ✅ 测试结果统计
@@ -96,6 +99,7 @@ LLM 模型: claude-3-5-sonnet-20241022
 **症状**：工作流失败，提示 "GEMINI_API_KEY 未配置"
 
 **解决**：
+
 1. 检查 Secret Name 是否拼写正确
 2. 确认 API Key 有效且未过期
 3. 验证选择的 LLM 提供商与配置的 Secret 匹配
@@ -105,6 +109,7 @@ LLM 模型: claude-3-5-sonnet-20241022
 **症状**：工作流显示 "The operation was canceled"
 
 **解决**：
+
 1. 增加 `timeout_minutes` 参数（默认 120）
 2. 选择难度更低的项目测试
 3. 启用并行测试减少总时间
@@ -114,6 +119,7 @@ LLM 模型: claude-3-5-sonnet-20241022
 **症状**：Artifacts 部分为空
 
 **解决**：
+
 1. 确认 `upload_reports` 设置为 `true`
 2. 检查测试是否成功运行完成
 3. 查看日志确认报告生成步骤是否执行
@@ -123,6 +129,7 @@ LLM 模型: claude-3-5-sonnet-20241022
 **症状**：提示 "Minutes quota exceeded"
 
 **解决**：
+
 - 公开仓库：无此限制
 - 私有仓库：等待下个月配额刷新或升级计划
 

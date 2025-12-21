@@ -5,44 +5,44 @@ on:
     inputs:
       # ========== 测试范围参数 ==========
       test_mode:
-        description: '测试模式'
+        description: "测试模式"
         required: true
         type: choice
-        default: 'local'
+        default: "local"
         options:
           - local
           - docker
           - both
-      
+
       project_name:
-        description: '特定项目名称（留空运行所有项目）'
+        description: "特定项目名称（留空运行所有项目）"
         required: false
         type: string
-        default: ''
-      
+        default: ""
+
       difficulty:
-        description: '难度过滤'
+        description: "难度过滤"
         required: true
         type: choice
-        default: 'all'
+        default: "all"
         options:
           - all
           - easy
           - medium
           - hard
-      
+
       tags:
-        description: '标签过滤（逗号分隔，如：docker,nodejs）'
+        description: "标签过滤（逗号分隔，如：docker,nodejs）"
         required: false
         type: string
-        default: ''
-      
+        default: ""
+
       # ========== LLM 配置参数 ==========
       llm_provider:
-        description: 'LLM 提供商'
+        description: "LLM 提供商"
         required: true
         type: choice
-        default: 'gemini'
+        default: "gemini"
         options:
           - gemini
           - openai
@@ -50,122 +50,145 @@ on:
           - deepseek
           - openrouter
           - openai-compatible
-      
+
       llm_model:
-        description: 'LLM 模型名称'
+        description: "LLM 模型名称"
         required: false
         type: string
-        default: 'gemini-2.0-flash-exp'
-      
+        default: "gemini-2.0-flash-exp"
+
       temperature:
-        description: '温度值 (0.0-2.0)'
+        description: "温度值 (0.0-2.0)"
         required: false
         type: string
-        default: '0.0'
-      
+        default: "0.0"
+
       max_iterations:
-        description: '最大迭代次数'
+        description: "最大迭代次数"
         required: false
         type: string
-        default: '180'
-      
+        default: "180"
+
       max_iterations_per_step:
-        description: '每步最大迭代次数'
+        description: "每步最大迭代次数"
         required: false
         type: string
-        default: '30'
-      
+        default: "30"
+
       # ========== 部署配置参数 ==========
       enable_planning:
-        description: '启用规划阶段'
+        description: "启用规划阶段"
         required: true
         type: boolean
         default: true
-      
+
       require_plan_approval:
-        description: '需要计划批准（Actions中应设为false）'
+        description: "需要计划批准（Actions中应设为false）"
         required: true
         type: boolean
         default: false
-      
+
       planning_timeout:
-        description: '规划超时时间（秒）'
+        description: "规划超时时间（秒）"
         required: false
         type: string
-        default: '60'
-      
+        default: "60"
+
       loop_detection_enabled:
-        description: '启用循环检测'
+        description: "启用循环检测"
         required: true
         type: boolean
         default: true
-      
+
+      # ========== 交互配置参数 ==========
+      interaction_enabled:
+        description: "启用用户交互"
+        required: true
+        type: boolean
+        default: true
+
+      interaction_mode:
+        description: "交互模式"
+        required: true
+        type: choice
+        default: "cli"
+        options:
+          - cli
+          - auto
+          - callback
+
+      auto_retry_on_interaction:
+        description: "交互时自动重试"
+        required: true
+        type: boolean
+        default: true
+
       # ========== 测试执行参数 ==========
       parallel_mode:
-        description: '并行测试模式'
+        description: "并行测试模式"
         required: true
         type: boolean
         default: false
-      
+
       max_workers:
-        description: '并行工作线程数'
+        description: "并行工作线程数"
         required: false
         type: string
-        default: '2'
-      
+        default: "2"
+
       skip_setup:
-        description: '跳过环境设置'
+        description: "跳过环境设置"
         required: true
         type: boolean
         default: false
-      
+
       timeout_minutes:
-        description: '整体超时时间（分钟）'
+        description: "整体超时时间（分钟）"
         required: false
         type: string
-        default: '120'
-      
+        default: "120"
+
       # ========== 输出配置参数 ==========
       upload_logs:
-        description: '上传测试日志'
+        description: "上传测试日志"
         required: true
         type: boolean
         default: true
-      
+
       upload_reports:
-        description: '上传测试报告'
+        description: "上传测试报告"
         required: true
         type: boolean
         default: true
-      
+
       retention_days:
-        description: 'Artifacts 保留天数'
+        description: "Artifacts 保留天数"
         required: false
         type: string
-        default: '30'
+        default: "30"
 
 jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(github.event.inputs.timeout_minutes) }}
-    
+
     steps:
       # ========== 环境设置 ==========
       - name: 📦 Checkout 代码
         uses: actions/checkout@v4
-      
+
       - name: 🐍 设置 Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-          cache: 'pip'
-      
+          python-version: "3.12"
+          cache: "pip"
+
       - name: 📥 安装依赖
         run: |
           pip install --upgrade pip
           pip install -e .
           echo "✅ 依赖安装完成"
-      
+
       # ========== 配置生成 ==========
       - name: ⚙️ 生成测试配置
         run: |
@@ -180,7 +203,10 @@ jobs:
           INPUT_REQUIRE_PLAN_APPROVAL: ${{ github.event.inputs.require_plan_approval }}
           INPUT_PLANNING_TIMEOUT: ${{ github.event.inputs.planning_timeout }}
           INPUT_LOOP_DETECTION_ENABLED: ${{ github.event.inputs.loop_detection_enabled }}
-      
+          INPUT_INTERACTION_ENABLED: ${{ github.event.inputs.interaction_enabled }}
+          INPUT_INTERACTION_MODE: ${{ github.event.inputs.interaction_mode }}
+          INPUT_AUTO_RETRY_ON_INTERACTION: ${{ github.event.inputs.auto_retry_on_interaction }}
+
       # ========== API Key 设置 ==========
       - name: 🔑 配置 API Keys
         run: |
@@ -223,7 +249,7 @@ jobs:
               ;;
           esac
           echo "✅ API Key 配置完成"
-      
+
       # ========== 运行测试 ==========
       - name: 🧪 运行测试套件
         continue-on-error: true
@@ -231,31 +257,31 @@ jobs:
         run: |
           # 构建测试命令
           TEST_CMD="python -m tests.run_tests --config config/github_actions_config.json"
-          
+
           # 添加项目过滤
           if [ -n "${{ github.event.inputs.project_name }}" ]; then
             TEST_CMD="$TEST_CMD --project ${{ github.event.inputs.project_name }}"
           fi
-          
+
           # 添加难度过滤
           if [ "${{ github.event.inputs.difficulty }}" != "all" ]; then
             TEST_CMD="$TEST_CMD --difficulty ${{ github.event.inputs.difficulty }}"
           fi
-          
+
           # 添加标签过滤
           if [ -n "${{ github.event.inputs.tags }}" ]; then
             TEST_CMD="$TEST_CMD --tags ${{ github.event.inputs.tags }}"
           fi
-          
+
           # 添加其他选项
           if [ "${{ github.event.inputs.skip_setup }}" == "true" ]; then
             TEST_CMD="$TEST_CMD --skip-setup"
           fi
-          
+
           if [ "${{ github.event.inputs.parallel_mode }}" == "true" ]; then
             TEST_CMD="$TEST_CMD --parallel --max-workers ${{ github.event.inputs.max_workers }}"
           fi
-          
+
           # 根据测试模式运行
           case "${{ github.event.inputs.test_mode }}" in
             local)
@@ -268,13 +294,13 @@ jobs:
               TEST_CMD="$TEST_CMD --local --docker"
               ;;
           esac
-          
+
           echo "🚀 执行命令: $TEST_CMD"
           $TEST_CMD 2>&1 | tee test_output.log
-          
+
           # 保存退出码
           echo "TEST_EXIT_CODE=${PIPESTATUS[0]}" >> $GITHUB_ENV
-      
+
       # ========== 收集日志和报告 ==========
       - name: 📊 收集测试结果
         if: always()
@@ -283,31 +309,31 @@ jobs:
           mkdir -p test-artifacts/agent_logs
           mkdir -p test-artifacts/reports
           mkdir -p test-artifacts/config
-          
+
           # 复制测试日志
           if [ -f test_output.log ]; then
             cp test_output.log test-artifacts/logs/
           fi
-          
+
           # 复制部署日志
           if [ -d agent_logs ]; then
             cp -r agent_logs/* test-artifacts/agent_logs/ 2>/dev/null || true
           fi
-          
+
           # 复制测试报告
           if [ -d tests/results ]; then
             find tests/results -name "*.html" -o -name "*.json" -o -name "*.log" | while read file; do
               cp "$file" test-artifacts/reports/ 2>/dev/null || true
             done
           fi
-          
+
           # 复制使用的配置
           if [ -f config/github_actions_config.json ]; then
             cp config/github_actions_config.json test-artifacts/config/
           fi
-          
+
           echo "✅ 测试结果收集完成"
-      
+
       # ========== 上传日志 ==========
       - name: 📤 上传测试日志
         if: always() && github.event.inputs.upload_logs == 'true'
@@ -318,7 +344,7 @@ jobs:
             test-artifacts/logs/
             test-artifacts/agent_logs/
           retention-days: ${{ fromJSON(github.event.inputs.retention_days) }}
-      
+
       # ========== 上传报告 ==========
       - name: 📤 上传测试报告
         if: always() && github.event.inputs.upload_reports == 'true'
@@ -329,7 +355,7 @@ jobs:
             test-artifacts/reports/
             test-artifacts/config/
           retention-days: ${{ fromJSON(github.event.inputs.retention_days) }}
-      
+
       # ========== 生成摘要 ==========
       - name: 📋 生成测试摘要
         if: always()
@@ -341,21 +367,21 @@ jobs:
           echo "- **LLM 提供商**: ${{ github.event.inputs.llm_provider }}" >> $GITHUB_STEP_SUMMARY
           echo "- **LLM 模型**: ${{ github.event.inputs.llm_model }}" >> $GITHUB_STEP_SUMMARY
           echo "- **难度过滤**: ${{ github.event.inputs.difficulty }}" >> $GITHUB_STEP_SUMMARY
-          
+
           if [ -n "${{ github.event.inputs.project_name }}" ]; then
             echo "- **测试项目**: ${{ github.event.inputs.project_name }}" >> $GITHUB_STEP_SUMMARY
           else
             echo "- **测试项目**: 所有项目" >> $GITHUB_STEP_SUMMARY
           fi
-          
+
           if [ -n "${{ github.event.inputs.tags }}" ]; then
             echo "- **标签过滤**: ${{ github.event.inputs.tags }}" >> $GITHUB_STEP_SUMMARY
           fi
-          
+
           echo "- **并行模式**: ${{ github.event.inputs.parallel_mode }}" >> $GITHUB_STEP_SUMMARY
           echo "- **循环检测**: ${{ github.event.inputs.loop_detection_enabled }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
+
           # 尝试解析测试报告
           if [ -f test-artifacts/reports/test_report.json ]; then
             echo "### 📈 测试结果" >> $GITHUB_STEP_SUMMARY
@@ -364,20 +390,20 @@ jobs:
             cat test-artifacts/reports/test_report.json >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
           fi
-          
+
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 📦 生成的 Artifacts" >> $GITHUB_STEP_SUMMARY
           echo "- 测试日志: \`test-logs-${{ github.run_number }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- 测试报告: \`test-reports-${{ github.run_number }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
+
           # 显示退出码
           if [ "$TEST_EXIT_CODE" == "0" ]; then
             echo "### ✅ 测试状态: 通过" >> $GITHUB_STEP_SUMMARY
           else
             echo "### ❌ 测试状态: 失败 (退出码: $TEST_EXIT_CODE)" >> $GITHUB_STEP_SUMMARY
           fi
-      
+
       # ========== 设置最终状态 ==========
       - name: 🎯 检查测试结果
         if: always()

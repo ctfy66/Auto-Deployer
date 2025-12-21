@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 from .config import AppConfig, load_config
 from .workflow import DeploymentRequest, DeploymentWorkflow
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -68,6 +71,16 @@ def build_parser() -> argparse.ArgumentParser:
     deploy_parser.add_argument("--password", help="SSH password", default=None)
     deploy_parser.add_argument(
         "--key-path", help="Path to SSH private key", default=None
+    )
+    
+    # 交互模式选项
+    deploy_parser.add_argument(
+        "--non-interactive", action="store_true",
+        help="Disable user interaction (auto-retry on interaction requests)"
+    )
+    deploy_parser.add_argument(
+        "--auto-mode", choices=["retry", "defaults"], default=None,
+        help="Auto mode behavior: 'retry' triggers replanning, 'defaults' uses default values"
     )
 
     # logs 子命令 - 查看 Agent 日志
@@ -627,6 +640,24 @@ def dispatch_command(args: argparse.Namespace) -> int:
     # 处理 memory 命令
     if args.command == "memory":
         return handle_memory_command(args, context)
+    
+    # 处理命令行参数覆盖配置（仅针对 deploy 命令）
+    if args.command == "deploy":
+        if getattr(args, "non_interactive", False):
+            # 命令行指定非交互模式
+            context.config.interaction.enabled = True
+            context.config.interaction.mode = "auto"
+            context.config.interaction.auto_retry_on_interaction = True
+            logger.info("CLI override: non-interactive mode enabled")
+        
+        if getattr(args, "auto_mode", None):
+            context.config.interaction.mode = "auto"
+            if args.auto_mode == "retry":
+                context.config.interaction.auto_retry_on_interaction = True
+                logger.info("CLI override: auto-mode set to 'retry' (replanning on interaction)")
+            else:  # defaults
+                context.config.interaction.auto_retry_on_interaction = False
+                logger.info("CLI override: auto-mode set to 'defaults' (use default values)")
     
     workflow = DeploymentWorkflow(
         config=context.config,

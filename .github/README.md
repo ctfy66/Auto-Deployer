@@ -19,10 +19,12 @@
 ### 使用 GitHub Actions 运行测试
 
 1. **配置 API Key**（首次使用）
+
    - 访问仓库 Settings → Secrets and variables → Actions
    - 添加 `AUTO_DEPLOYER_GEMINI_API_KEY` 或其他 LLM 提供商的 API Key
 
 2. **触发工作流**
+
    - 访问 Actions 标签页
    - 选择 "Run Auto-Deployer Tests"
    - 点击 "Run workflow"
@@ -41,12 +43,14 @@
 根据 GitHub Actions workflow inputs 动态生成配置文件。
 
 **功能：**
+
 - 读取 workflow 输入参数
 - 加载默认配置作为基础
 - 覆盖用户指定的参数
 - 生成 `config/github_actions_config.json`
 
 **环境变量：**
+
 - `INPUT_LLM_PROVIDER`: LLM 提供商
 - `INPUT_LLM_MODEL`: 模型名称
 - `INPUT_TEMPERATURE`: 温度值
@@ -54,6 +58,7 @@
 - 等等...
 
 **输出：**
+
 - `config/github_actions_config.json`
 
 ## 工作流说明
@@ -65,6 +70,7 @@
 **触发方式：** `workflow_dispatch`（手动触发）
 
 **主要步骤：**
+
 1. 检出代码
 2. 设置 Python 环境
 3. 安装依赖
@@ -76,10 +82,12 @@
 9. 生成摘要
 
 **Artifacts：**
+
 - `test-logs-[编号]`: 测试和部署日志
 - `test-reports-[编号]`: 测试报告和配置
 
 **配额消耗：**
+
 - 运行时间：15-180 分钟（取决于配置）
 - 公开仓库免费无限制
 - 私有仓库每月 2000 分钟
@@ -106,6 +114,7 @@ act workflow_dispatch --secret-file .secrets
 ### 更新工作流
 
 修改 `workflows/run-tests.yml` 后：
+
 1. 检查 YAML 语法
 2. 验证所有必需的 inputs 已定义
 3. 确保 secrets 正确引用
@@ -114,6 +123,7 @@ act workflow_dispatch --secret-file .secrets
 ### 更新配置生成脚本
 
 修改 `scripts/generate_config.py` 后：
+
 1. 确保所有环境变量正确读取
 2. 验证类型转换逻辑
 3. 测试默认值处理
@@ -131,36 +141,46 @@ act workflow_dispatch --secret-file .secrets
 ### 常见问题
 
 **问题：API Key 未配置**
+
 ```
 ❌ 错误: GEMINI_API_KEY 未配置
 ```
+
 解决：在仓库 Secrets 中添加对应的 API Key
 
 **问题：配置文件生成失败**
+
 ```
 ❌ 错误: 无法读取默认配置
 ```
+
 解决：检查 `config/default_config.json` 是否存在且格式正确
 
 **问题：测试超时**
+
 ```
 Error: The operation was canceled.
 ```
+
 解决：增加 `timeout_minutes` 参数值
 
 **问题：Artifacts 上传失败**
+
 ```
 Warning: No files were found with the provided path
 ```
+
 解决：检查测试是否生成了预期的日志和报告文件
 
 ### 调试技巧
 
 1. **启用调试日志**
+
    - 在仓库 Settings → Secrets 添加 `ACTIONS_STEP_DEBUG=true`
    - 重新运行工作流查看详细日志
 
 2. **本地测试配置生成**
+
    ```bash
    export INPUT_LLM_PROVIDER=gemini
    export INPUT_LLM_MODEL=gemini-2.0-flash-exp

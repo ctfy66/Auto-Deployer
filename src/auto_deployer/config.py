@@ -109,18 +109,32 @@ class DeploymentConfig:
 
 
 @dataclass
+class InteractionConfig:
+    """Configuration for user interaction."""
+    
+    enabled: bool = True
+    mode: str = "cli"  # "cli" | "auto" | "callback"
+    auto_retry_on_interaction: bool = True
+
+
+@dataclass
 class AppConfig:
     """Top-level configuration."""
 
     llm: LLMConfig = field(default_factory=LLMConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     deployment: DeploymentConfig = field(default_factory=DeploymentConfig)
+    interaction: InteractionConfig = field(default_factory=InteractionConfig)
 
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "AppConfig":
         llm_payload = payload.get("llm", {}) or {}
         agent_payload = payload.get("agent", {}) or {}
         deployment_payload = payload.get("deployment", {}) or {}
+        interaction_payload = payload.get("interaction", {}) or {}
+        
+        # 过滤掉以下划线开头的注释字段
+        interaction_payload = {k: v for k, v in interaction_payload.items() if not k.startswith("_")}
         
         # 解析循环检测配置
         loop_detection_payload = agent_payload.get("loop_detection", {}) or {}
@@ -142,6 +156,9 @@ class AppConfig:
             ),
             deployment=DeploymentConfig(
                 **{**DeploymentConfig().__dict__, **deployment_payload}
+            ),
+            interaction=InteractionConfig(
+                **{**InteractionConfig().__dict__, **interaction_payload}
             ),
         )
 

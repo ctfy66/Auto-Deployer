@@ -1,6 +1,7 @@
 paramiko>=3.3
 requests>=2.31
 python-dotenv>=1.0
+psutil>=5.9.0
 
 [all]
 chromadb>=0.4.0

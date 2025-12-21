@@ -7,6 +7,7 @@ from .handler import (
     CLIInteractionHandler,
     CallbackInteractionHandler,
     AutoResponseHandler,
+    AutoRetryHandler,
     InputType,
     QuestionCategory,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "CLIInteractionHandler",
     "CallbackInteractionHandler",
     "AutoResponseHandler",
+    "AutoRetryHandler",
     "InputType",
     "QuestionCategory",
 ]

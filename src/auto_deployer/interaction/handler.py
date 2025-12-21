@@ -95,6 +95,7 @@ class InteractionResponse:
     is_custom: bool = False         # 是否是自定义输入
     cancelled: bool = False         # 用户是否取消了
     timed_out: bool = False         # 是否超时
+    metadata: Optional[dict] = None # 用于存储额外的元数据（如 auto_retry 信息）
     
     @classmethod
     def from_choice(cls, option_index: int, options: List[str]) -> "InteractionResponse":
@@ -363,3 +364,36 @@ class AutoResponseHandler(UserInteractionHandler):
     
     def notify(self, message: str, level: str = "info") -> None:
         logger.info(f"[{level}] {message}")
+
+
+class AutoRetryHandler(UserInteractionHandler):
+    """
+    Auto-retry handler for non-interactive mode.
+    When asked for input, returns a 'retry' signal to trigger replanning.
+    """
+    
+    def __init__(self, retry_message: str = "retry") -> None:
+        """
+        Initialize auto-retry handler.
+        
+        Args:
+            retry_message: The message to return when interaction is needed
+        """
+        self.retry_message = retry_message
+        logger.info("🤖 Using AutoRetryHandler - will trigger replanning on user interactions")
+    
+    def ask(self, request: InteractionRequest) -> InteractionResponse:
+        """Return retry signal instead of asking user."""
+        logger.info(f"[AUTO MODE] 🔄 Interaction requested: {request.question[:80]}")
+        logger.info(f"[AUTO MODE] 🔄 Returning '{self.retry_message}' to trigger replanning")
+        
+        # 返回特殊的 retry 响应
+        return InteractionResponse(
+            value=self.retry_message,
+            is_custom=True,
+            metadata={"auto_retry": True, "original_question": request.question}
+        )
+    
+    def notify(self, message: str, level: str = "info") -> None:
+        """Log notifications."""
+        logger.info(f"[AUTO MODE - {level.upper()}] {message}")

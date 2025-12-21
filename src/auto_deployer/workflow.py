@@ -60,8 +60,39 @@ class DeploymentWorkflow:
         self.workspace = Path(workspace)
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.remote_probe = RemoteProbe()
-        # 用户交互处理器 - 默认使用 CLI
-        self.interaction_handler = interaction_handler or CLIInteractionHandler()
+        
+        # 用户交互处理器 - 根据配置自动选择
+        if interaction_handler:
+            self.interaction_handler = interaction_handler
+        else:
+            self.interaction_handler = self._create_interaction_handler()
+    
+    def _create_interaction_handler(self) -> UserInteractionHandler:
+        """根据配置创建合适的交互处理器"""
+        from .interaction import AutoRetryHandler, AutoResponseHandler
+        
+        if not self.config.interaction.enabled:
+            logger.info("User interaction disabled - using AutoRetryHandler")
+            return AutoRetryHandler(retry_message="retry")
+        
+        mode = self.config.interaction.mode.lower()
+        
+        if mode == "auto":
+            if self.config.interaction.auto_retry_on_interaction:
+                logger.info("Auto mode enabled - using AutoRetryHandler")
+                return AutoRetryHandler(retry_message="retry")
+            else:
+                logger.info("Auto mode enabled - using AutoResponseHandler")
+                return AutoResponseHandler(use_defaults=True, always_confirm=True)
+        elif mode == "cli":
+            logger.info("CLI interaction mode enabled")
+            return CLIInteractionHandler()
+        elif mode == "callback":
+            logger.warning("Callback mode specified but no callback provided, falling back to CLI")
+            return CLIInteractionHandler()
+        else:
+            logger.warning(f"Unknown interaction mode '{mode}', falling back to CLI")
+            return CLIInteractionHandler()
 
     def run_deploy(self, request: DeploymentRequest) -> None:
         """Run the deployment workflow using LLM Agent."""

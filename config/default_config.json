@@ -81,5 +81,11 @@
     "default_auth_method": "password",
     "default_password": null,
     "default_key_path": null
+  },
+  "interaction": {
+    "enabled": true,
+    "mode": "cli",
+    "auto_retry_on_interaction": true,
+    "_comment": "mode options: 'cli' (interactive), 'auto' (auto-retry on interaction), 'callback' (GUI/Web integration)"
   }
 }
