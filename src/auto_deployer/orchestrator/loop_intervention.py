@@ -136,7 +136,7 @@ MANDATORY REFLECTION - You MUST do the following:
 2. **CHANGE STRATEGY** - Your next action MUST be fundamentally different:
    ❌ NOT just adding flags like --force, --verbose, --ignore-errors
    ❌ NOT just repeating with sudo
-   ❌ NOT just waiting and retrying
+   
    
    ✅ Consider: Different tool/approach
    ✅ Consider: Check system state first (logs, processes, files)

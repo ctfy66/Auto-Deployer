@@ -50,6 +50,9 @@ agent_logs/
 .auto-deployer/
 *.log
 
+# GitHub Actions generated config
+config/github_actions_config.json
+
 # OS
 .DS_Store
 Thumbs.db
