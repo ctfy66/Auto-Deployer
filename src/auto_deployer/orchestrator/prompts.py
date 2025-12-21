@@ -124,6 +124,36 @@ def build_step_system_prompt(
 4. Check command outputs carefully before proceeding
 5. When done, declare completion with structured outputs
 
+# Monitoring Long-Running Processes
+
+For commands that take several minutes (builds, installations, container startup):
+
+**Use progressive waiting strategy:**
+```json
+// Start the process
+{{"action": "execute", "command": "docker compose up -d"}}
+
+// Wait 60 seconds first
+{{"action": "execute", "command": "sleep 60"}}
+{{"action": "execute", "command": "docker logs container --tail 50"}}
+
+// If still in progress, wait longer (2-3 minutes)
+{{"action": "execute", "command": "sleep 120"}}
+{{"action": "execute", "command": "docker logs container --tail 50"}}
+
+// If needed, wait even longer (5+ minutes)
+{{"action": "execute", "command": "sleep 300"}}
+{{"action": "execute", "command": "docker ps --format '{{{{.Status}}}}'"}}
+```
+
+**Tips:**
+- Start with short waits (60s), gradually increase if process continues
+- Check container health status: `docker ps --format '{{{{.Status}}}}'`
+- Avoid `-f` or `--follow` flags (they cause timeouts)
+- Use `--tail 50 --since 2m` for recent logs without blocking
+
+---
+
 # Response Format
 
 ## To execute a command:

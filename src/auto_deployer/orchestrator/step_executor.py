@@ -299,10 +299,72 @@ class StepExecutor:
                 message=f"Failed to parse LLM response: {text[:100]}"
             )
     
+    def _get_smart_timeout(self, command: str) -> tuple[int, int]:
+        """根据命令内容返回合理的超时值
+        
+        Args:
+            command: 要执行的命令
+            
+        Returns:
+            (timeout, idle_timeout) 元组
+        """
+        import re
+        
+        # 默认值
+        timeout = 600        # 10分钟
+        idle_timeout = 60    # 1分钟
+        
+        # 检测sleep/wait命令，延长总超时
+        sleep_patterns = [
+            r'sleep\s+(\d+)',                    # Linux: sleep 300
+            r'Start-Sleep\s+-Seconds\s+(\d+)',   # PowerShell: Start-Sleep -Seconds 300
+            r'timeout\s+/t\s+(\d+)',             # Windows CMD: timeout /t 300
+        ]
+        for pattern in sleep_patterns:
+            match = re.search(pattern, command, re.IGNORECASE)
+            if match:
+                sleep_duration = int(match.group(1))
+                # 总超时 = sleep时间 + 120秒余量
+                timeout = max(timeout, sleep_duration + 120)
+                break
+        
+        # 检测长时间运行的构建/安装命令
+        long_running_commands = [
+            'npm install',
+            'npm ci',
+            'pnpm install',
+            'pnpm i',
+            'yarn install',
+            'pip install',
+            'docker build',
+            'docker compose up',
+            'docker-compose up',
+            'cargo build',
+            'mvn install',
+            'gradle build',
+        ]
+        
+        command_lower = command.lower()
+        if any(cmd in command_lower for cmd in long_running_commands):
+            timeout = 1800       # 30分钟
+            idle_timeout = 180   # 3分钟
+        
+        # 检测monitoring命令（带-f或--follow标志）
+        if re.search(r'-f\b|--follow\b', command):
+            idle_timeout = 300   # 5分钟
+        
+        return timeout, idle_timeout
+    
     def _execute_command(self, command: str, reasoning: Optional[str] = None) -> CommandRecord:
         """执行命令并保存完整输出"""
         try:
-            result = self.session.run(command, timeout=600, idle_timeout=60)
+            # 智能检测超时参数
+            timeout, idle_timeout = self._get_smart_timeout(command)
+            
+            # 记录使用的超时值（调试用）
+            logger.debug(f"Executing command with timeout={timeout}s, idle_timeout={idle_timeout}s")
+            
+            result = self.session.run(command, timeout=timeout, idle_timeout=idle_timeout)
 
             # 直接使用完整输出，不再提取
             record = CommandRecord(
