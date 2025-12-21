@@ -260,6 +260,7 @@ class DeploymentOrchestrator:
             goal=step.description or step.name,
             success_criteria=step.success_criteria or f"Complete: {step.name}",
             category=step.category,
+            estimated_commands=step.estimated_commands,
             execution_summary=execution_summary,
             predecessor_outputs=predecessor_outputs,
         )

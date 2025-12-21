@@ -15,13 +15,16 @@ if TYPE_CHECKING:
 # JSON Schema for step outputs (用于 LLM 理解输出格式)
 STEP_OUTPUT_SCHEMA = """{
   "summary": "string (REQUIRED) - One sentence describing what was accomplished",
-  "environment_changes": {"key": "value"} - Changes to track (e.g., {"node_version": "18.17.0"}),
-  "new_configurations": {"ENV_VAR": "value"} - Environment variables or configs set,
-  "artifacts": ["path/to/file"] - Important files created or modified,
-  "services_started": [{"name": "service", "port": 8080, "pid": 12345}] - Services started,
-  "custom_data": {} - Any other data to pass to subsequent steps,
-  "issues_resolved": [{"issue": "description", "resolution": "how it was fixed"}]
-}"""
+  "key_info": {
+    "port": 4090,              // If a service was started on a specific port
+    "service": "nodejs",       // Service name if applicable
+    "deploy_path": "/app",     // Important paths
+    "config_file": ".env"      // Key configuration files
+  }
+}
+
+Note: Only include fields in key_info that are actually relevant to this step.
+Empty key_info is acceptable if no critical information needs to be passed forward."""
 
 
 # 步骤完成指令
@@ -34,19 +37,18 @@ When the step goal is achieved and success criteria are met, you MUST declare co
   "reasoning": "Explanation of why the step is complete",
   "outputs": {
     "summary": "REQUIRED: One sentence describing what was accomplished",
-    "environment_changes": {},
-    "new_configurations": {},
-    "artifacts": [],
-    "services_started": [],
-    "custom_data": {},
-    "issues_resolved": []
+    "key_info": {
+      // Only include information that subsequent steps need
+      // Examples: {"port": 4090}, {"service": "nodejs", "pid": 12345}, {"config_file": ".env"}
+    }
   }
 }
 ```
 
 **IMPORTANT**: 
 - The `outputs.summary` field is REQUIRED
-- Other fields in outputs can be empty objects/arrays if not applicable
+- Include `key_info` only if there's critical information to pass forward (e.g., port numbers, service names)
+- Empty `key_info` is acceptable: `"key_info": {}`
 - Do NOT skip the outputs object when declaring step_done
 """
 
@@ -94,16 +96,24 @@ def build_step_system_prompt(
         for step_id, outputs in ctx.predecessor_outputs.items():
             predecessor_info += f"\n### Step {step_id}\n"
             predecessor_info += f"- Summary: {outputs.summary}\n"
-            if outputs.environment_changes:
-                predecessor_info += f"- Environment: {outputs.environment_changes}\n"
-            if outputs.custom_data:
-                predecessor_info += f"- Data: {outputs.custom_data}\n"
+            if outputs.key_info:
+                predecessor_info += f"- Key Info: {outputs.key_info}\n"
+    
+    # 建议命令（来自规划阶段）
+    suggested_commands = ""
+    if ctx.estimated_commands:
+        suggested_commands = "\n## Suggested Commands (from Planning Phase)\n"
+        suggested_commands += "The planner suggested these commands for reference:\n"
+        for i, cmd in enumerate(ctx.estimated_commands, 1):
+            suggested_commands += f"{i}. `{cmd}`\n"
+        suggested_commands += "\nNote: These are suggestions. Adapt them based on actual environment conditions.\n"
     
     return f"""You are a deployment agent executing a specific deployment step.
 
 {summary_context}
 {platform_info}
 {predecessor_info}
+{suggested_commands}
 ---
 
 # Current Step

@@ -189,6 +189,7 @@ class StepExecutor:
                 user_interactions=self._format_interactions(step_ctx.user_interactions),
                 max_iterations=self.max_iterations,
                 current_iteration=step_ctx.iteration,
+                estimated_commands=step_ctx.estimated_commands,
             )
         else:
             prompt = build_step_execution_prompt(
@@ -205,6 +206,7 @@ class StepExecutor:
                 max_iterations=self.max_iterations,
                 current_iteration=step_ctx.iteration,
                 os_type="linux",
+                estimated_commands=step_ctx.estimated_commands,
             )
         
         # 检查token使用量，如果达到阈值则触发压缩
@@ -227,6 +229,7 @@ class StepExecutor:
                     user_interactions=self._format_interactions(step_ctx.user_interactions),
                     max_iterations=self.max_iterations,
                     current_iteration=step_ctx.iteration,
+                    estimated_commands=step_ctx.estimated_commands,
                 )
             else:
                 prompt = build_step_execution_prompt(
@@ -243,6 +246,7 @@ class StepExecutor:
                     max_iterations=self.max_iterations,
                     current_iteration=step_ctx.iteration,
                     os_type="linux",
+                    estimated_commands=step_ctx.estimated_commands,
                 )
         
         # 调用 LLM
@@ -554,7 +558,7 @@ class StepExecutor:
         return "\n".join(lines)
     
     def _validate_outputs(self, outputs_dict: Optional[dict]) -> Optional[StepOutputs]:
-        """验证并解析步骤产出
+        """验证并解析步骤产出（简化版）
         
         Args:
             outputs_dict: LLM 返回的 outputs 字典
@@ -580,15 +584,16 @@ class StepExecutor:
             else:
                 summary = "Step completed"
         
+        # 提取 key_info（可选）
+        key_info = outputs_dict.get("key_info", {})
+        if not isinstance(key_info, dict):
+            logger.warning(f"key_info should be a dict, got {type(key_info)}")
+            key_info = {}
+        
         try:
             return StepOutputs(
                 summary=summary,
-                environment_changes=outputs_dict.get("environment_changes", {}),
-                new_configurations=outputs_dict.get("new_configurations", {}),
-                artifacts=outputs_dict.get("artifacts", []),
-                services_started=outputs_dict.get("services_started", []),
-                custom_data=outputs_dict.get("custom_data", {}),
-                issues_resolved=outputs_dict.get("issues_resolved", []),
+                key_info=key_info,
             )
         except Exception as e:
             logger.error(f"Failed to create StepOutputs: {e}")

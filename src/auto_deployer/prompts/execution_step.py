@@ -56,6 +56,7 @@ def build_simplified_step_prompt(
     max_iterations: int,
     current_iteration: int,
     os_type: str = "linux",
+    estimated_commands: list | None = None,
 ) -> str:
     """Build simplified step execution prompt.
 
@@ -72,11 +73,21 @@ def build_simplified_step_prompt(
         max_iterations: Maximum iterations allowed for this step
         current_iteration: Current iteration number
         os_type: Operating system type ("linux", "windows", "macos")
+        estimated_commands: Suggested commands from planning phase
 
     Returns:
         Formatted step execution prompt
     """
     shell_type = "PowerShell" if os_type.lower() == "windows" else "Bash"
+    
+    # Build suggested commands section if available
+    suggested_cmds_section = ""
+    if estimated_commands:
+        suggested_cmds_section = "\n## Suggested Commands (from Planning)\n"
+        suggested_cmds_section += "The planner suggested these commands for reference:\n"
+        for i, cmd in enumerate(estimated_commands, 1):
+            suggested_cmds_section += f"{i}. `{cmd}`\n"
+        suggested_cmds_section += "\nNote: These are suggestions. Adapt based on actual conditions.\n"
 
     return f"""# Step {step_id}: {step_name}
 
@@ -92,7 +103,7 @@ def build_simplified_step_prompt(
 - Host: {host_info}
 - Shell: {shell_type}
 - Iteration: {current_iteration}/{max_iterations}
-
+{suggested_cmds_section}
 ## Command History
 {commands_history}
 
@@ -125,7 +136,10 @@ Respond with JSON only:
 {{
   "action": "step_done",
   "message": "what was accomplished",
-  "outputs": {{"key": "value"}}
+  "outputs": {{
+    "summary": "One sentence describing what was done",
+    "key_info": {{"port": 4090}}  // Only if relevant info to pass forward
+  }}
 }}
 
 4. **Mark step failed** (cannot continue):
@@ -165,6 +179,7 @@ def build_step_execution_prompt(
     max_iterations: int,
     current_iteration: int,
     os_type: str = "linux",
+    estimated_commands: list | None = None,
 ) -> str:
     """Simplified version of build_step_execution_prompt.
 
@@ -183,6 +198,7 @@ def build_step_execution_prompt(
         max_iterations=max_iterations,
         current_iteration=current_iteration,
         os_type=os_type,
+        estimated_commands=estimated_commands,
     )
 
 
@@ -199,6 +215,7 @@ def build_step_execution_prompt_windows(
     user_interactions: str,
     max_iterations: int,
     current_iteration: int,
+    estimated_commands: list | None = None,
 ) -> str:
     """Simplified Windows-specific prompt.
 
@@ -217,6 +234,7 @@ def build_step_execution_prompt_windows(
         max_iterations=max_iterations,
         current_iteration=current_iteration,
         os_type="windows",
+        estimated_commands=estimated_commands,
     )
 
 

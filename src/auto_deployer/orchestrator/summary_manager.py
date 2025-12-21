@@ -64,7 +64,7 @@ class SummaryManager:
         step_category: str,
         outputs: StepOutputs,
     ) -> None:
-        """将步骤产出合并到全局摘要
+        """将步骤产出合并到全局摘要（简化版）
         
         Args:
             step_name: 步骤名称
@@ -76,34 +76,18 @@ class SummaryManager:
         self.summary.completed_actions.append(action_summary)
         logger.debug("Added completed action: %s", action_summary)
         
-        # 2. 合并环境变更
-        if outputs.environment_changes:
-            self.summary.environment.update(outputs.environment_changes)
+        # 2. 合并关键信息到环境（如果有）
+        if outputs.key_info:
+            self.summary.environment.update(outputs.key_info)
             logger.debug(
-                "Updated environment with %d changes", 
-                len(outputs.environment_changes)
+                "Updated environment with %d key info items", 
+                len(outputs.key_info)
             )
         
-        # 3. 合并配置值
-        if outputs.new_configurations:
-            self.summary.configurations.update(outputs.new_configurations)
-            logger.debug(
-                "Updated configurations with %d values",
-                len(outputs.new_configurations)
-            )
-        
-        # 4. 记录解决的问题
-        if outputs.issues_resolved:
-            self.summary.resolved_issues.extend(outputs.issues_resolved)
-            logger.debug(
-                "Added %d resolved issues",
-                len(outputs.issues_resolved)
-            )
-        
-        # 5. 更新时间戳
+        # 3. 更新时间戳
         self.summary.last_updated = datetime.now().isoformat()
         
-        # 6. 控制摘要大小
+        # 4. 控制摘要大小
         self._truncate_if_needed()
     
     def _truncate_if_needed(self) -> None:

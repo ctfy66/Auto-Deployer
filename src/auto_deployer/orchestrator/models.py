@@ -40,35 +40,16 @@ class StepAction:
 
 @dataclass
 class StepOutputs:
-    """步骤的强制结构化产出
+    """步骤的结构化产出（精简版）
     
-    每个步骤完成时必须提供此结构化产出，用于：
-    1. 传递关键信息给后续步骤
-    2. 更新全局执行摘要
-    3. 保证跨步骤的信息一致性
+    每个步骤完成时提供此结构化产出，用于传递关键信息给后续步骤
     """
     # 必填：一句话总结本步骤完成了什么
     summary: str
     
-    # 环境变更（会合并到 ExecutionSummary.environment）
-    environment_changes: Dict[str, Any] = field(default_factory=dict)
-    
-    # 新增配置值（环境变量等）
-    new_configurations: Dict[str, str] = field(default_factory=dict)
-    
-    # 创建/修改的关键文件路径
-    artifacts: List[str] = field(default_factory=list)
-    
-    # 启动的服务列表
-    # 例如: [{"name": "myapp", "port": 3000, "pid": 12345}]
-    services_started: List[Dict[str, Any]] = field(default_factory=list)
-    
-    # 需要传递给后续步骤的自定义数据
-    custom_data: Dict[str, Any] = field(default_factory=dict)
-    
-    # 遇到并解决的问题
-    # 例如: [{"issue": "Port 3000 occupied", "resolution": "Changed to 3001"}]
-    issues_resolved: List[Dict[str, str]] = field(default_factory=list)
+    # 关键信息（可选）：只记录对后续步骤重要的信息
+    # 例如: {"port": 4090, "service": "nodejs", "deploy_path": "/app"}
+    key_info: Dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -79,12 +60,7 @@ class StepOutputs:
         """从字典创建"""
         return cls(
             summary=data.get("summary", ""),
-            environment_changes=data.get("environment_changes", {}),
-            new_configurations=data.get("new_configurations", {}),
-            artifacts=data.get("artifacts", []),
-            services_started=data.get("services_started", []),
-            custom_data=data.get("custom_data", {}),
-            issues_resolved=data.get("issues_resolved", []),
+            key_info=data.get("key_info", {}),
         )
 
 
@@ -248,6 +224,9 @@ class StepContext:
     goal: str
     success_criteria: str
     category: str
+    
+    # 规划阶段建议的命令（参考用）
+    estimated_commands: List[str] = field(default_factory=list)
     
     # 执行状态
     status: StepStatus = StepStatus.PENDING
