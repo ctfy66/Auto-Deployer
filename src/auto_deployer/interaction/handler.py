@@ -369,29 +369,29 @@ class AutoResponseHandler(UserInteractionHandler):
 class AutoRetryHandler(UserInteractionHandler):
     """
     Auto-retry handler for non-interactive mode.
-    When asked for input, returns a 'retry' signal to trigger replanning.
+    When asked for input, returns a 'continue' signal to let agent continue trying.
     """
     
-    def __init__(self, retry_message: str = "retry") -> None:
+    def __init__(self, retry_message: str = "continue") -> None:
         """
         Initialize auto-retry handler.
         
         Args:
-            retry_message: The message to return when interaction is needed
+            retry_message: The message to return when interaction is needed (default: 'continue')
         """
         self.retry_message = retry_message
-        logger.info("🤖 Using AutoRetryHandler - will trigger replanning on user interactions")
+        logger.info("🤖 Using AutoRetryHandler - will return 'continue' on user interactions")
     
     def ask(self, request: InteractionRequest) -> InteractionResponse:
-        """Return retry signal instead of asking user."""
+        """Return continue signal instead of asking user."""
         logger.info(f"[AUTO MODE] 🔄 Interaction requested: {request.question[:80]}")
-        logger.info(f"[AUTO MODE] 🔄 Returning '{self.retry_message}' to trigger replanning")
+        logger.info(f"[AUTO MODE] 🔄 Returning '{self.retry_message}' to let agent continue")
         
-        # 返回特殊的 retry 响应
+        # 返回特殊的 continue 响应
         return InteractionResponse(
             value=self.retry_message,
             is_custom=True,
-            metadata={"auto_retry": True, "original_question": request.question}
+            metadata={"auto_continue": True, "original_question": request.question}
         )
     
     def notify(self, message: str, level: str = "info") -> None:

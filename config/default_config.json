@@ -85,7 +85,7 @@
   },
   "interaction": {
     "enabled": true,
-    "mode": "cli",
+    "mode": "auto",
     "auto_retry_on_interaction": true,
     "_comment": "mode options: 'cli' (interactive), 'auto' (auto-retry on interaction), 'callback' (GUI/Web integration)"
   }

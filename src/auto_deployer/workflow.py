@@ -73,14 +73,14 @@ class DeploymentWorkflow:
         
         if not self.config.interaction.enabled:
             logger.info("User interaction disabled - using AutoRetryHandler")
-            return AutoRetryHandler(retry_message="retry")
+            return AutoRetryHandler()  # 使用默认值 'continue'
         
         mode = self.config.interaction.mode.lower()
         
         if mode == "auto":
             if self.config.interaction.auto_retry_on_interaction:
                 logger.info("Auto mode enabled - using AutoRetryHandler")
-                return AutoRetryHandler(retry_message="retry")
+                return AutoRetryHandler()  # 使用默认值 'continue'
             else:
                 logger.info("Auto mode enabled - using AutoResponseHandler")
                 return AutoResponseHandler(use_defaults=True, always_confirm=True)
