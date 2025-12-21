@@ -10,7 +10,7 @@ from typing import Optional, Union, TYPE_CHECKING, Callable
 
 from .models import (
     StepContext, StepResult, StepAction, ActionType,
-    CommandRecord, StepStatus, DeployContext, StepOutputs, ExecutionSummary
+    CommandRecord, StepStatus, DeployContext, StepOutputs, ExecutionSummary, LoopDetectionResult
 )
 from .prompts import build_step_system_prompt, build_step_user_prompt
 
@@ -40,6 +40,7 @@ class StepExecutor:
         max_iterations_per_step: int = 10,
         is_windows: bool = False,
         on_command_executed: Optional[Callable[[], None]] = None,
+        loop_detection_enabled: bool = True,
     ):
         self.llm_config = llm_config
         self.session = session
@@ -60,6 +61,21 @@ class StepExecutor:
         self.token_manager = TokenManager(llm_config.provider, llm_config.model)
         self.history_compressor = HistoryCompressor(self.llm_provider)
         
+        # Initialize loop detection components
+        from .loop_detector import LoopDetector
+        from .loop_intervention import LoopInterventionManager
+        
+        self.loop_detector = LoopDetector(
+            enabled=loop_detection_enabled,
+            direct_repeat_threshold=3,
+            error_loop_threshold=4,
+            command_similarity_threshold=0.85,
+            output_similarity_threshold=0.80,
+        )
+        self.loop_intervention_manager = LoopInterventionManager(
+            temperature_boost_levels=[0.3, 0.5, 0.7]
+        )
+        
     def execute(
         self,
         step_ctx: StepContext,
@@ -78,12 +94,56 @@ class StepExecutor:
         step_ctx.status = StepStatus.RUNNING
         step_ctx.max_iterations = self.max_iterations
         
+        # Reset loop intervention manager for this step
+        self.loop_intervention_manager.reset()
+        
         logger.info(f"   Goal: {step_ctx.goal}")
         logger.info(f"   Success criteria: {step_ctx.success_criteria}")
         
         for iteration in range(1, self.max_iterations + 1):
             step_ctx.iteration = iteration
             logger.debug(f"   Iteration {iteration}/{self.max_iterations}")
+            
+            # === Loop Detection ===
+            if len(step_ctx.commands) >= 3:
+                detection = self.loop_detector.check(step_ctx.commands)
+                
+                if detection.is_loop:
+                    logger.warning(f"   🔄 Loop detected: {detection.loop_type} (confidence: {detection.confidence:.2%})")
+                    for evidence in detection.evidence:
+                        logger.warning(f"      • {evidence}")
+                    
+                    # Decide intervention
+                    intervention = self.loop_intervention_manager.decide_intervention(
+                        detection, iteration
+                    )
+                    
+                    logger.info(f"   {intervention['message']}")
+                    
+                    if intervention['action'] == 'boost_temperature':
+                        # Boost temperature
+                        self.llm_config.temperature = intervention['temperature']
+                        logger.info(f"      Temperature: {self.llm_config.temperature}")
+                    
+                    elif intervention['action'] == 'inject_reflection':
+                        # Inject reflection prompt
+                        step_ctx.reflection_prompt = intervention['reflection_text']
+                        self.llm_config.temperature = intervention['temperature']
+                        logger.info(f"      Reflection injected, temperature: {self.llm_config.temperature}")
+                    
+                    elif intervention['action'] == 'ask_user':
+                        # Ask user for intervention
+                        self.llm_config.temperature = intervention['temperature']
+                        user_decision = self._handle_loop_intervention(detection, step_ctx)
+                        
+                        if user_decision == 'abort':
+                            step_ctx.status = StepStatus.FAILED
+                            step_ctx.error = "User aborted due to severe loop"
+                            return StepResult.failed(error="User aborted due to severe loop")
+                        elif user_decision == 'skip':
+                            step_ctx.status = StepStatus.SKIPPED
+                            return StepResult.skipped(reason="User skipped due to loop")
+                        # Otherwise continue with user guidance
             
             # 获取 LLM 决策
             action = self._get_next_action(step_ctx, deploy_ctx)
@@ -248,6 +308,13 @@ class StepExecutor:
                     os_type="linux",
                     estimated_commands=step_ctx.estimated_commands,
                 )
+        
+        # 插入反思prompt（如果存在）
+        if step_ctx.reflection_prompt:
+            prompt = step_ctx.reflection_prompt + "\n\n" + prompt
+            logger.debug("   Reflection prompt injected into LLM call")
+            # 清除反思prompt，避免重复注入
+            step_ctx.reflection_prompt = None
         
         # 调用 LLM
         response_text = self._call_llm(prompt)
@@ -426,6 +493,81 @@ class StepExecutor:
             "value": response.value,
             "cancelled": response.cancelled,
         }
+    
+    def _handle_loop_intervention(self, detection: LoopDetectionResult, step_ctx: StepContext) -> str:
+        """处理严重循环，询问用户如何处理
+        
+        Args:
+            detection: 循环检测结果
+            step_ctx: 步骤上下文
+            
+        Returns:
+            str: 用户决定 ("continue" | "skip" | "abort" | "guidance")
+        """
+        from ..interaction import InteractionRequest, InputType, QuestionCategory
+        
+        evidence_text = "\n".join(f"  • {e}" for e in detection.evidence)
+        
+        question = f"""
+Agent appears stuck in a loop ({detection.loop_type}, confidence: {detection.confidence:.1%}):
+
+{evidence_text}
+
+This is the {self.loop_intervention_manager.loop_count}th time a loop has been detected.
+
+What would you like to do?
+"""
+        
+        request = InteractionRequest(
+            question=question,
+            options=[
+                "Continue (let agent try with higher temperature)",
+                "Skip this step",
+                "Abort deployment",
+                "Provide guidance (custom input)"
+            ],
+            input_type=InputType.CHOICE,
+            category=QuestionCategory.ERROR_RECOVERY,
+            allow_custom=True,
+        )
+        
+        response = self.interaction_handler.ask(request)
+        
+        if response.cancelled:
+            return "abort"
+        
+        choice = response.value.lower()
+        
+        if "continue" in choice:
+            return "continue"
+        elif "skip" in choice:
+            return "skip"
+        elif "abort" in choice:
+            return "abort"
+        elif "guidance" in choice or "custom" in choice:
+            # Ask for custom guidance
+            guidance_request = InteractionRequest(
+                question="Please provide guidance for the agent:",
+                options=[],
+                input_type=InputType.TEXT,
+                category=QuestionCategory.INFORMATION,
+            )
+            guidance_response = self.interaction_handler.ask(guidance_request)
+            
+            if not guidance_response.cancelled and guidance_response.value:
+                # Inject user guidance as reflection
+                step_ctx.reflection_prompt = f"""
+USER GUIDANCE:
+{guidance_response.value}
+
+Please follow the user's guidance carefully.
+"""
+                logger.info(f"   User guidance injected: {guidance_response.value[:100]}...")
+            
+            return "continue"
+        else:
+            return "continue"
+    
     
     def _compress_step_history(self, step_ctx: StepContext) -> StepContext:
         """压缩当前步骤的命令历史

@@ -262,6 +262,7 @@ class DeploymentWorkflow:
             interaction_handler=self.interaction_handler,
             max_iterations_per_step=max_per_step,
             is_windows=is_windows,
+            loop_detection_enabled=self.config.agent.loop_detection.enabled,
         )
         
         success = orchestrator.run(plan, deploy_ctx)
@@ -364,6 +365,7 @@ class DeploymentWorkflow:
             interaction_handler=self.interaction_handler,
             max_iterations_per_step=max_per_step,
             is_windows=False,
+            loop_detection_enabled=self.config.agent.loop_detection.enabled,
         )
         
         success = orchestrator.run(plan, deploy_ctx)

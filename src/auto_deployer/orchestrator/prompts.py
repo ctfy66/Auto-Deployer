@@ -53,6 +53,199 @@ When the step goal is achieved and success criteria are met, you MUST declare co
 """
 
 
+def _get_error_diagnosis_guide(is_windows: bool = False) -> str:
+    """获取错误诊断和处理指南
+    
+    Args:
+        is_windows: 是否是 Windows 环境
+        
+    Returns:
+        错误诊断指南文本
+    """
+    platform_specific = ""
+    if is_windows:
+        platform_specific = """
+**Windows-Specific Diagnostics:**
+- Docker Desktop: Check `Get-Process "Docker Desktop"` to verify it's running
+- Services: Use `Get-Service <name>` and `Start-Service <name>`
+- Paths: Use `Test-Path` before file operations, escape backslashes properly
+- Background processes: Use `Start-Process -NoNewWindow -FilePath "program" -ArgumentList "args"`
+- Ports: Use `Get-NetTCPConnection -LocalPort <port>` to check port usage
+"""
+    else:
+        platform_specific = """
+**Linux-Specific Diagnostics:**
+- Permissions: Use `sudo`, `chmod`, `chown` for permission issues
+- Services: Use `systemctl status/start/restart <service>` or `service <service> status`
+- Processes: Use `ps aux | grep <name>` or `pgrep <name>`
+- Ports: Use `lsof -i :<port>` or `netstat -tuln | grep <port>`
+- Background processes: Use `nohup command &` or `command > /dev/null 2>&1 &`
+"""
+    
+    return f"""
+---
+
+# Error Diagnosis & Recovery Guide
+
+## Common Error Patterns
+
+When a command fails, identify the error type by matching these patterns:
+
+**2. File System Errors:**
+- `No such file or directory` / `PathNotFound` → File/dir doesn't exist, check with Test-Path (Win) or ls (Linux)
+- `Permission denied` / `Access denied` → Insufficient permissions, use sudo (Linux) or check file ownership
+- `file exists` / `already exists` → Resource conflict, remove old files or use force flag
+
+**3. Service Connection Errors:**
+- `Cannot connect` + `socket/pipe` → Service not running, start the service first
+- `Connection refused` → Service not listening yet, wait and retry
+- `The system cannot find the file specified` + `pipe` → Docker Desktop not running (Windows)
+
+**4. Port Conflicts:**
+- `EADDRINUSE` / `address already in use` → Port occupied, find process and kill it or use different port
+- Check occupied ports before starting services
+
+**5. Docker Errors:**
+- `daemon not running` / `cannot connect to docker` → Start Docker Desktop/daemon first
+- `image not found` → Pull image first or check image name
+- `mount source path` errors → Check path exists, permissions, or remove old volumes
+- `Container ... already exists` → Remove old container with `docker rm -f <container>`
+
+**6. Dependency/Package Errors:**
+- `MODULE_NOT_FOUND` / `Cannot find module` → Run npm install or install missing dependency
+- `command not found` → Tool not installed, install it first
+- `No package ... found` → Wrong package name or repository
+
+**7. Timeout Errors:**
+- `IDLE_TIMEOUT: No output for 60 seconds` → Two possible causes:
+  1. Command waiting for input (interactive prompts) - use non-interactive alternatives (e.g., `-y` flags)
+  2. Long-running operation with no output - use progressive sleep checks (see Progressive Timeout Strategy below)
+- `TOTAL_TIMEOUT: Command exceeded 600 seconds` → Command took too long
+  - Solution: Use progressive sleep checks with background execution instead of blocking commands (see Progressive Timeout Strategy below)
+
+**8. Build/Compilation Errors:**
+- Check logs for specific error messages
+- Common: missing dependencies, syntax errors, environment variables not set
+
+{platform_specific}
+
+## Systematic Diagnosis Steps
+
+When a command fails, follow these steps:
+
+1. **Read Full Error Message**
+   - Check both stderr AND stdout (sometimes errors are in stdout)
+   - Look for specific error codes or messages, not just generic "failed"
+
+2. **Identify Error Type**
+   - Match error message against patterns above
+   - Determine if it's: filesystem, service, network, permission, or timeout issue
+
+3. **Check Prerequisites**
+   - Service running? (`docker ps`, `Get-Service`, `systemctl status`)
+   - File exists? (`Test-Path`, `ls`, `[ -f file ]`)
+   - Permissions OK? (`ls -la`, `Get-Acl`)
+   - Port available? (Use port check commands above)
+
+4. **Collect Context** (if needed)
+   - Process list: `Get-Process` / `ps aux`
+   - Disk space: `Get-PSDrive` / `df -h`
+   - Logs: `docker logs`, service logs, application logs
+
+5. **Apply Fix**
+   - Use the appropriate fix for the identified error type
+   - Examples:
+     - File missing → Create it or install dependencies
+     - Service down → Start service and wait for ready
+     - Permission issue → Add sudo or fix permissions
+     - Port conflict → Change port or kill blocking process
+
+6. **Verify Fix**
+   - Re-check the condition that failed
+   - Don't immediately retry the same command without verification
+
+## Progressive Timeout Strategy
+
+For long-running processes (builds, installations, service startup):
+
+**DO NOT use `-f`, `--follow`, or blocking commands** - they cause IDLE_TIMEOUT
+
+**Instead, use progressive waiting with status checks:**
+
+```
+Step 1: Start process in background
+- Windows: Start-Process -NoNewWindow -FilePath "npm" -ArgumentList "run start"
+- Linux: nohup npm run start > app.log 2>&1 &
+- Docker: docker compose up -d (already detached)
+
+Step 2: Wait 30-60 seconds, then check status
+- Command: sleep 30  (or Start-Sleep -Seconds 30 on Windows)
+- Check: docker ps, Get-Process, curl -I http://localhost:port
+
+Step 3: If still starting, wait 2-3 minutes, check again
+- Command: sleep 120
+- Check: docker logs container --tail 50 --since 2m
+- Check: service health endpoint
+
+Step 4: If still starting, wait 5 minutes, check again
+- Command: sleep 300
+- Check: More comprehensive status check
+
+Step 5: If still not ready after 15 minutes total → likely failed
+- Check logs for errors
+- Consider declaring step_failed if no progress
+```
+
+**Key Points:**
+- Start with SHORT waits (30-60s), gradually increase
+- Check status after EACH wait, don't just wait blindly
+- Use `--tail 50 --since 2m` for Docker logs to avoid huge output
+- Maximum reasonable wait: 15 minutes for complex builds
+
+## When to Give Up (Declare step_failed)
+
+**You SHOULD declare step_failed when:**
+
+1. **Repeated Failures:** Same command failed 3+ times with same error
+2. **Fundamental Issues:**
+   - Repository doesn't exist (verified with multiple attempts)
+   - Required tool not installed and cannot be installed automatically
+   - Docker/service cannot start due to system limitations
+3. **User Input Required:**
+   - Configuration needs manual decision (which port, which option)
+   - Credentials/API keys needed
+   - → Use `ask_user` action instead of step_failed
+4. **Resource Exhausted:**
+   - Exceeded 15 minutes waiting for service with no signs of progress
+   - Approaching iteration limit (e.g., used 25/30 iterations) with no solution in sight
+5. **Unrecoverable Errors:**
+   - Filesystem corruption
+   - Incompatible system architecture
+   - Critical dependency conflict that requires manual intervention
+
+**You should NOT give up when:**
+
+1. **First Failure:** Always diagnose and attempt fix before giving up
+2. **Service Starting:** If logs show progress, continue progressive waiting
+3. **Fixable Issues:**
+   - Permission errors → try sudo
+   - Port conflicts → suggest different port or kill process
+   - Missing files → install dependencies
+   - Directory exists → remove and reclone
+4. **Early in Iteration Budget:** If only used 5/30 iterations, keep trying
+
+**Golden Rule:** Before declaring step_failed, ask yourself:
+- "Have I identified the ROOT CAUSE of the error?"
+- "Have I tried the appropriate fix for this error type?"
+- "Is there anything else I can reasonably try?"
+
+If YES to all three → declare step_failed with clear reasoning
+If NO to any → continue diagnosis and fixing
+
+---
+"""
+
+
 def build_step_system_prompt(
     ctx: "StepContext",
     summary: "ExecutionSummary",
@@ -108,6 +301,9 @@ def build_step_system_prompt(
             suggested_commands += f"{i}. `{cmd}`\n"
         suggested_commands += "\nNote: These are suggestions. Adapt them based on actual environment conditions.\n"
     
+    # 错误诊断指南
+    error_guide = _get_error_diagnosis_guide(is_windows)
+    
     return f"""You are a deployment agent executing a specific deployment step.
 
 {summary_context}
@@ -124,7 +320,7 @@ def build_step_system_prompt(
 - **Success Criteria**: {ctx.success_criteria}
 - **Iteration**: {ctx.iteration}/{ctx.max_iterations}
 
----
+{error_guide}
 
 # Instructions
 

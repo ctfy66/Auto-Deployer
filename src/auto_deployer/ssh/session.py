@@ -186,8 +186,9 @@ class SSHSession:
                         command=command,
                         stdout="".join(stdout_chunks).strip(),
                         stderr=f"IDLE_TIMEOUT: No output for {idle_timeout} seconds. "
-                               f"Command may be waiting for input (like newgrp, su -, passwd, or interactive prompts). "
-                               f"Use non-interactive alternatives instead.",
+                               f"Possible causes:\n"
+                               f"1. Command waiting for input (interactive prompts like newgrp, su -, passwd) - use non-interactive alternatives\n"
+                               f"2. Long-running operation with no output - use progressive sleep checks (see Progressive Timeout Strategy)",
                         exit_status=-1,
                     )
                 
@@ -198,7 +199,8 @@ class SSHSession:
                     return SSHCommandResult(
                         command=command,
                         stdout="".join(stdout_chunks).strip(),
-                        stderr=f"TOTAL_TIMEOUT: Command exceeded {timeout} seconds total execution time.",
+                        stderr=f"TOTAL_TIMEOUT: Command exceeded {timeout} seconds total execution time. "
+                               f"For long-running operations, use progressive sleep checks instead of blocking commands (see Progressive Timeout Strategy).",
                         exit_status=-2,
                     )
                 

@@ -41,6 +41,7 @@ class DeploymentOrchestrator:
         log_dir: Optional[str] = None,
         max_iterations_per_step: int = 10,
         is_windows: bool = False,
+        loop_detection_enabled: bool = True,
     ):
         self.llm_config = llm_config
         self.session = session
@@ -56,6 +57,7 @@ class DeploymentOrchestrator:
             max_iterations_per_step=max_iterations_per_step,
             is_windows=is_windows,
             on_command_executed=lambda: self._sync_and_save_log(),
+            loop_detection_enabled=loop_detection_enabled,
         )
         
         # 摘要管理器（在 run() 中初始化）

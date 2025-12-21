@@ -39,6 +39,16 @@ class StepAction:
 
 
 @dataclass
+class LoopDetectionResult:
+    """循环检测结果"""
+    is_loop: bool
+    loop_type: str  # "direct_repeat" | "alternating" | "error_loop" | "none"
+    confidence: float
+    evidence: List[str]
+    loop_commands_indices: List[int] = field(default_factory=list)  # 构成循环的命令索引
+
+
+@dataclass
 class StepOutputs:
     """步骤的结构化产出（精简版）
     
@@ -236,6 +246,9 @@ class StepContext:
     # 执行记录
     commands: List[CommandRecord] = field(default_factory=list)
     user_interactions: List[Dict] = field(default_factory=list)
+    
+    # 循环检测：反思提示（当检测到循环时注入）
+    reflection_prompt: Optional[str] = None
     
     # 压缩后的历史记录（当token达到阈值时触发）
     compressed_history: Optional[str] = None

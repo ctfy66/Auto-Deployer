@@ -6,7 +6,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 from dotenv import load_dotenv
 
@@ -66,6 +66,18 @@ class LLMConfig:
 
 
 @dataclass
+class LoopDetectionConfig:
+    """Configuration for loop detection in step execution."""
+    
+    enabled: bool = True
+    direct_repeat_threshold: int = 3           # 直接重复触发阈值
+    error_loop_threshold: int = 4              # 错误循环触发阈值
+    command_similarity_threshold: float = 0.85  # 命令相似度阈值
+    output_similarity_threshold: float = 0.80   # 输出相似度阈值
+    temperature_boost_levels: List[float] = field(default_factory=lambda: [0.3, 0.5, 0.7])
+
+
+@dataclass
 class AgentConfig:
     """Configuration for the deployment agent and orchestrator."""
 
@@ -78,6 +90,8 @@ class AgentConfig:
     # 上下文压缩配置
     compression_threshold: float = 0.5     # Token使用达到50%时压缩
     compression_keep_ratio: float = 0.3    # 保留最近30%的命令
+    # 循环检测配置
+    loop_detection: LoopDetectionConfig = field(default_factory=LoopDetectionConfig)
 
 
 @dataclass
@@ -107,9 +121,25 @@ class AppConfig:
         llm_payload = payload.get("llm", {}) or {}
         agent_payload = payload.get("agent", {}) or {}
         deployment_payload = payload.get("deployment", {}) or {}
+        
+        # 解析循环检测配置
+        loop_detection_payload = agent_payload.get("loop_detection", {}) or {}
+        loop_detection_config = LoopDetectionConfig(
+            **{**LoopDetectionConfig().__dict__, **loop_detection_payload}
+        )
+        
+        # 移除 loop_detection，避免在 AgentConfig 中重复
+        agent_payload_cleaned = {k: v for k, v in agent_payload.items() if k != "loop_detection"}
+        
+        # 构建 AgentConfig 的默认值字典，但排除 loop_detection
+        agent_defaults = {k: v for k, v in AgentConfig().__dict__.items() if k != "loop_detection"}
+        
         return cls(
             llm=LLMConfig(**{**LLMConfig().__dict__, **llm_payload}),
-            agent=AgentConfig(**{**AgentConfig().__dict__, **agent_payload}),
+            agent=AgentConfig(
+                **{**agent_defaults, **agent_payload_cleaned},
+                loop_detection=loop_detection_config
+            ),
             deployment=DeploymentConfig(
                 **{**DeploymentConfig().__dict__, **deployment_payload}
             ),

@@ -18,10 +18,13 @@ from .models import (
     DeployContext,
     StepOutputs,
     ExecutionSummary,
+    LoopDetectionResult,
 )
 from .step_executor import StepExecutor
 from .orchestrator import DeploymentOrchestrator
 from .summary_manager import SummaryManager
+from .loop_detector import LoopDetector
+from .loop_intervention import LoopInterventionManager
 
 __all__ = [
     "StepStatus",
@@ -33,8 +36,11 @@ __all__ = [
     "DeployContext",
     "StepOutputs",
     "ExecutionSummary",
+    "LoopDetectionResult",
     "StepExecutor",
     "DeploymentOrchestrator",
     "SummaryManager",
+    "LoopDetector",
+    "LoopInterventionManager",
 ]
 
