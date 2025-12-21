@@ -76,8 +76,8 @@ on:
         default: "30"
 
       # ========== 部署配置参数 ==========
-      enable_planning:
-        description: "启用规划阶段"
+      use_orchestrator:
+        description: "使用编排器模式（步骤化执行）"
         required: true
         type: boolean
         default: true
@@ -199,7 +199,7 @@ jobs:
           INPUT_TEMPERATURE: ${{ github.event.inputs.temperature }}
           INPUT_MAX_ITERATIONS: ${{ github.event.inputs.max_iterations }}
           INPUT_MAX_ITERATIONS_PER_STEP: ${{ github.event.inputs.max_iterations_per_step }}
-          INPUT_ENABLE_PLANNING: ${{ github.event.inputs.enable_planning }}
+          INPUT_USE_ORCHESTRATOR: ${{ github.event.inputs.use_orchestrator }}
           INPUT_REQUIRE_PLAN_APPROVAL: ${{ github.event.inputs.require_plan_approval }}
           INPUT_PLANNING_TIMEOUT: ${{ github.event.inputs.planning_timeout }}
           INPUT_LOOP_DETECTION_ENABLED: ${{ github.event.inputs.loop_detection_enabled }}

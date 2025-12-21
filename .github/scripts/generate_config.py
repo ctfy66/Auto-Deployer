@@ -44,7 +44,7 @@ def main():
     temperature = str_to_float(os.getenv('INPUT_TEMPERATURE', '0.0'), 0.0)
     max_iterations = str_to_int(os.getenv('INPUT_MAX_ITERATIONS', '180'), 180)
     max_iterations_per_step = str_to_int(os.getenv('INPUT_MAX_ITERATIONS_PER_STEP', '30'), 30)
-    enable_planning = str_to_bool(os.getenv('INPUT_ENABLE_PLANNING', 'true'))
+    use_orchestrator = str_to_bool(os.getenv('INPUT_USE_ORCHESTRATOR', 'true'))
     require_plan_approval = str_to_bool(os.getenv('INPUT_REQUIRE_PLAN_APPROVAL', 'false'))
     planning_timeout = str_to_int(os.getenv('INPUT_PLANNING_TIMEOUT', '60'), 60)
     loop_detection_enabled = str_to_bool(os.getenv('INPUT_LOOP_DETECTION_ENABLED', 'true'))
@@ -90,13 +90,13 @@ def main():
     
     config['agent']['max_iterations'] = max_iterations
     config['agent']['max_iterations_per_step'] = max_iterations_per_step
-    config['agent']['enable_planning'] = enable_planning
+    config['agent']['use_orchestrator'] = use_orchestrator
     config['agent']['require_plan_approval'] = require_plan_approval
     config['agent']['planning_timeout'] = planning_timeout
     
     print(f"   Max Iterations: {max_iterations}")
     print(f"   Max Iterations Per Step: {max_iterations_per_step}")
-    print(f"   Enable Planning: {enable_planning}")
+    print(f"   Use Orchestrator: {use_orchestrator}")
     print(f"   Require Plan Approval: {require_plan_approval}")
     print(f"   Planning Timeout: {planning_timeout}s")
     

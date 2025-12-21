@@ -62,12 +62,12 @@
 
 #### 部署配置参数
 
-| 参数                     | 说明           | 默认值  |
-| ------------------------ | -------------- | ------- |
-| `enable_planning`        | 启用规划阶段   | `true`  |
-| `require_plan_approval`  | 需要计划批准   | `false` |
-| `planning_timeout`       | 规划超时（秒） | `60`    |
-| `loop_detection_enabled` | 启用循环检测   | `true`  |
+| 参数                       | 说明                       | 默认值  |
+| -------------------------- | -------------------------- | ------- |
+| `use_orchestrator`         | 使用编排器模式（步骤化执行） | `true`  |
+| `require_plan_approval`    | 需要计划批准               | `false` |
+| `planning_timeout`         | 规划超时（秒）             | `60`    |
+| `loop_detection_enabled`   | 启用循环检测               | `true`  |
 
 #### 交互配置参数
 

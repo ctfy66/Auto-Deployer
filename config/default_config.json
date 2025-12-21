@@ -60,6 +60,7 @@
   "agent": {
     "max_iterations": 180,
     "max_iterations_per_step": 30,
+    "use_orchestrator": true,
     "require_plan_approval": false,
     "planning_timeout": 60,
     "compression_threshold": 0.5,
