@@ -221,14 +221,16 @@ python -m tests.real_deployment.test_suite --parallel --project docker-welcome -
 **并行测试说明**：
 
 - `--parallel`: 启用并行测试模式
-- `--workers N`: 设置并行worker数量（默认3，建议3-5）
-- `--no-retry`: 禁用失败自动重试（默认会重试1次）
-- 并行测试会生成增强的报告，包含系统信息、LLM配置、重试统计等详细信息
+- `--workers N`: 设置并行 worker 数量（默认 3，建议 3-5）
+- `--no-retry`: 禁用失败自动重试（默认会重试 1 次）
+- 并行测试会生成增强的报告，包含系统信息、LLM 配置、重试统计等详细信息
 - 测试结果保存在 `tests/results/reports/parallel_test_report_*.json` 和 `*.md`
 
 # 跳过环境设置（调试模式，需要手动提供环境）
+
 py -3.12 -m tests.run_tests --skip-setup
-```
+
+````
 
 **Linux/Mac**：
 
@@ -247,7 +249,7 @@ python -m tests.run_tests --config config/my_config.json --local
 
 # 跳过环境设置（调试模式，需要手动提供环境）
 python -m tests.run_tests --skip-setup
-```
+````
 
 ### 测试项目配置
 

@@ -385,7 +385,7 @@ class StepExecutor:
         timeout = 600        # 10分钟
         idle_timeout = 60    # 1分钟
         
-        # 检测sleep/wait命令，延长总超时
+        # 检测sleep/wait命令，延长总超时和空闲超时
         sleep_patterns = [
             r'sleep\s+(\d+)',                    # Linux: sleep 300
             r'Start-Sleep\s+-Seconds\s+(\d+)',   # PowerShell: Start-Sleep -Seconds 300
@@ -397,6 +397,8 @@ class StepExecutor:
                 sleep_duration = int(match.group(1))
                 # 总超时 = sleep时间 + 120秒余量
                 timeout = max(timeout, sleep_duration + 120)
+                # 空闲超时 = sleep时间 + 30秒余量（允许sleep命令完整执行）
+                idle_timeout = max(idle_timeout, sleep_duration + 30)
                 break
         
         # 检测长时间运行的构建/安装命令

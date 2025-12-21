@@ -57,7 +57,7 @@ TEST_PROJECTS: List[TestProject] = [
             timeout=10
         ),
         tags=["nodejs", "express", "simple"],
-        skip=True  # Express主仓库较复杂，暂时跳过
+        skip=False  
     ),
     TestProject(
         name="python-flask-hello",
@@ -72,7 +72,7 @@ TEST_PROJECTS: List[TestProject] = [
             timeout=10
         ),
         tags=["python", "flask", "simple"],
-        skip=True  # Flask主仓库较复杂，暂时跳过
+        skip= False
     ),
     TestProject(
         name="nodejs-simple-server",
@@ -87,7 +87,7 @@ TEST_PROJECTS: List[TestProject] = [
             timeout=10
         ),
         tags=["nodejs", "nextjs", "simple"],
-        skip=True  # Next.js主仓库较复杂，暂时跳过
+        skip=False  
     ),
     
     # ========== Medium 难度项目 ==========
@@ -138,6 +138,22 @@ TEST_PROJECTS: List[TestProject] = [
         tags=["nodejs", "nextjs", "fullstack"],
         skip=True  # Next.js主仓库较复杂，暂时跳过
     ),
+    TestProject(
+        name="BuildingAI",
+        repo_url="https://github.com/BidingCC/BuildingAI",
+        description="docker多组件项目",
+        expected_strategy="traditional",
+        difficulty="medium",
+        expected_time_minutes=20,
+        verification=VerificationConfig(
+            urls=["http://localhost:3000"],
+            expected_status=200,
+            timeout=10
+        ),
+        tags=["nodejs", "nextjs", "fullstack"],
+        skip=True  # Next.js主仓库较复杂，暂时跳过
+    ),
+
     
     # ========== Hard 难度项目 ==========
     TestProject(
