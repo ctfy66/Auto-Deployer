@@ -1,38 +1,26 @@
 # 用户交互可选功能使用指南# 用户交互可选功能使用指南
 
-
-
 ## 功能概述## 功能概述
-
-
 
 Auto-Deployer 现在支持将用户交互机制设置为可选，并支持多种交互模式：Auto-Deployer 现在支持将用户交互机制设置为可选，并支持多种交互模式：
 
+1. **CLI 模式** (默认): 通过命令行与用户交互 1. **CLI 模式** (默认): 通过命令行与用户交互
 
+2. **Auto 模式**: 自动模式，遇到交互请求时自动处理 2. **Auto 模式**: 自动模式，遇到交互请求时自动处理
 
-1. **CLI 模式** (默认): 通过命令行与用户交互1. **CLI 模式** (默认): 通过命令行与用户交互
+   - **continue 子模式**: 返回 "continue" 让 Agent 继续尝试 - **continue 子模式**: 返回 "continue" 让 Agent 继续尝试
 
-2. **Auto 模式**: 自动模式，遇到交互请求时自动处理2. **Auto 模式**: 自动模式，遇到交互请求时自动处理
-
-   - **continue 子模式**: 返回 "continue" 让 Agent 继续尝试   - **continue 子模式**: 返回 "continue" 让 Agent 继续尝试
-
-   - **defaults 子模式**: 自动使用默认值   - **defaults 子模式**: 自动使用默认值
-
-
+   - **defaults 子模式**: 自动使用默认值 - **defaults 子模式**: 自动使用默认值
 
 ## 配置方式## 配置方式
 
-
-
 ### 1. 通过配置文件 (`config/default_config.json`)### 1. 通过配置文件 (`config/default_config.json`)
 
-
-
-```json```json
+`json`json
 
 {{
 
-  "interaction": {  "interaction": {
+"interaction": { "interaction": {
 
     "enabled": true,    "enabled": true,
 
@@ -42,11 +30,11 @@ Auto-Deployer 现在支持将用户交互机制设置为可选，并支持多种
 
     "_comment": "mode options: 'cli' (interactive), 'auto' (auto-continue on interaction), 'callback' (GUI/Web integration)"    "_comment": "mode options: 'cli' (interactive), 'auto' (auto-retry on interaction), 'callback' (GUI/Web integration)"
 
-  }  }
+} }
 
 }}
 
-``````
+````
 
 
 
@@ -170,9 +158,7 @@ auto-deployer deploy --repo https://github.com/user/repo.git --local --non-inter
 
 auto-deployer deploy --repo https://github.com/user/repo.git --local --auto-mode defaults}
 
-``````
-
-
+````
 
 **行为**:**命令行方式**:
 
@@ -180,9 +166,9 @@ auto-deployer deploy --repo https://github.com/user/repo.git --local --auto-mode
 
 - 如果没有默认值，选择第一个选项```bash
 
-- 适合有合理默认配置的项目auto-deployer deploy --repo https://github.com/user/repo.git --local --auto-mode defaults
+- 适合有合理默认配置的项目 auto-deployer deploy --repo https://github.com/user/repo.git --local --auto-mode defaults
 
-```
+````
 
 ### 场景 3: 交互式部署（默认）
 
@@ -204,9 +190,9 @@ auto-deployer deploy --repo https://github.com/user/repo.git --local --auto-mode
 
 }**配置文件方式**:
 
-```
+````
 
-```json
+````json
 
 **命令行方式**:{
 
@@ -320,13 +306,13 @@ INFO:auto_deployer.interaction.handler:[AUTO MODE] 🔄 Returning 'continue' to 
 
 ## 示例输出
 
-```
+````
 
 🤔 Agent 需要您的输入:### 非交互模式（retry）
 
-   选择应用运行端口
+选择应用运行端口
 
-```
+````
 
    ℹ️  检测到 package.json 中未指定端口INFO:auto_deployer.workflow:Auto mode enabled - using AutoRetryHandler
 
@@ -370,9 +356,9 @@ INFO:auto_deployer.interaction.handler:🤖 Using AutoRetryHandler - will trigge
 
 运行以下代码验证功能：   请选择 [1]:
 
-```
+````
 
-```python
+````python
 
 import sys## 向后兼容性
 
@@ -438,7 +424,7 @@ auto-deployer deploy --helprequest = InteractionRequest(
 
                         Auto mode behavior: 'retry' lets agent continue, 'defaults' uses default values```
 
-```
+````
 
 ## 命令行帮助
 

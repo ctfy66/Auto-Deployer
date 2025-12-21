@@ -75,6 +75,15 @@ class StepExecutor:
         self.loop_intervention_manager = LoopInterventionManager(
             temperature_boost_levels=[0.3, 0.5, 0.7]
         )
+    
+    def _is_auto_mode(self) -> bool:
+        """检测当前是否处于 auto mode
+        
+        Returns:
+            bool: True 如果是 AutoRetryHandler 或 AutoResponseHandler
+        """
+        from ..interaction import AutoRetryHandler, AutoResponseHandler
+        return isinstance(self.interaction_handler, (AutoRetryHandler, AutoResponseHandler))
         
     def execute(
         self,
@@ -132,18 +141,33 @@ class StepExecutor:
                         logger.info(f"      Reflection injected, temperature: {self.llm_config.temperature}")
                     
                     elif intervention['action'] == 'ask_user':
-                        # Ask user for intervention
-                        self.llm_config.temperature = intervention['temperature']
-                        user_decision = self._handle_loop_intervention(detection, step_ctx)
-                        
-                        if user_decision == 'abort':
-                            step_ctx.status = StepStatus.FAILED
-                            step_ctx.error = "User aborted due to severe loop"
-                            return StepResult.failed(error="User aborted due to severe loop")
-                        elif user_decision == 'skip':
-                            step_ctx.status = StepStatus.SKIPPED
-                            return StepResult.skipped(reason="User skipped due to loop")
-                        # Otherwise continue with user guidance
+                        # Check if in auto mode
+                        if self._is_auto_mode():
+                            # Auto mode: don't ask user, apply automatic intervention
+                            logger.info(f"      🤖 Auto mode: Skipping user interaction, applying automatic intervention")
+                            
+                            # Apply stronger intervention: boost temperature + inject reflection
+                            self.llm_config.temperature = intervention['temperature']
+                            reflection = self.loop_intervention_manager._build_reflection_prompt(detection)
+                            step_ctx.reflection_prompt = reflection
+                            
+                            logger.info(f"      Temperature boosted to: {self.llm_config.temperature}")
+                            logger.info(f"      Reflection prompt injected automatically")
+                            
+                            # Continue execution with enhanced intervention
+                        else:
+                            # Interactive mode: ask user for intervention
+                            self.llm_config.temperature = intervention['temperature']
+                            user_decision = self._handle_loop_intervention(detection, step_ctx)
+                            
+                            if user_decision == 'abort':
+                                step_ctx.status = StepStatus.FAILED
+                                step_ctx.error = "User aborted due to severe loop"
+                                return StepResult.failed(error="User aborted due to severe loop")
+                            elif user_decision == 'skip':
+                                step_ctx.status = StepStatus.SKIPPED
+                                return StepResult.skipped(reason="User skipped due to loop")
+                            # Otherwise continue with user guidance
             
             # 获取 LLM 决策
             action = self._get_next_action(step_ctx, deploy_ctx)
