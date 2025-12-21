@@ -146,12 +146,12 @@ TEST_PROJECTS: List[TestProject] = [
         difficulty="medium",
         expected_time_minutes=20,
         verification=VerificationConfig(
-            urls=["http://localhost:3000"],
+            urls=["http://localhost:4090"],
             expected_status=200,
             timeout=10
         ),
         tags=["nodejs", "nextjs", "fullstack"],
-        skip=True  # Next.js主仓库较复杂，暂时跳过
+        skip=False  
     ),
 
     
@@ -190,21 +190,7 @@ TEST_PROJECTS: List[TestProject] = [
         tags=["docker-compose", "microservices", "complex"]
     ),
     
-    # ========== 真实使用过的项目 ==========
-    TestProject(
-        name="myblog-vitepress",
-        repo_url="https://github.com/ctfy66/myblog.git",
-        description="VitePress博客项目，需要构建后部署到Nginx，已在真实环境中测试过",
-        expected_strategy="static",
-        difficulty="medium",
-        expected_time_minutes=8,
-        verification=VerificationConfig(
-            urls=["http://localhost:80"],
-            expected_status=200,
-            timeout=10
-        ),
-        tags=["static", "vitepress", "nginx", "real-world"]
-    ),
+    
     
     # ========== 简单示例项目（适合快速测试）==========
     TestProject(

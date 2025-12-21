@@ -279,7 +279,7 @@ jobs:
           fi
 
           if [ "${{ github.event.inputs.parallel_mode }}" == "true" ]; then
-            TEST_CMD="$TEST_CMD --parallel --max-workers ${{ github.event.inputs.max_workers }}"
+            TEST_CMD="$TEST_CMD --parallel --workers ${{ github.event.inputs.max_workers }}"
           fi
 
           # 根据测试模式运行
