@@ -7,7 +7,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 
-from auto_deployer.workflow import DeploymentWorkflow, DeploymentRequest
+from auto_deployer.workflow import DeploymentWorkflow, DeploymentRequest, LocalDeploymentRequest
 from auto_deployer.config import AppConfig
 from .test_projects import TestProject
 from .test_environment import TestEnvironment
@@ -39,15 +39,17 @@ class DeploymentTester:
         self, 
         project: TestProject, 
         env_config: Dict[str, Any],
-        timeout_minutes: int = 30
+        timeout_minutes: int = 30,
+        local_mode: bool = False
     ) -> Dict[str, Any]:
         """
         测试单个项目部署
         
         Args:
             project: 测试项目配置
-            env_config: 环境配置（SSH连接信息）
+            env_config: 环境配置（SSH连接信息或本地环境信息）
             timeout_minutes: 超时时间（分钟）
+            local_mode: 是否使用本地模式（True=本地，False=SSH远程）
             
         Returns:
             包含所有指标的字典
@@ -57,21 +59,10 @@ class DeploymentTester:
         logger.info(f"   仓库: {project.repo_url}")
         logger.info(f"   难度: {project.difficulty}")
         logger.info(f"   预期策略: {project.expected_strategy}")
+        logger.info(f"   测试模式: {'🏠 本地' if local_mode else '🐳 Docker容器'}")
         logger.info(f"{'='*60}\n")
         
         start_time = time.time()
-        
-        # 创建部署请求
-        request = DeploymentRequest(
-            repo_url=project.repo_url,
-            host=env_config["host"],
-            port=env_config["port"],
-            username=env_config["username"],
-            auth_method="password",
-            password=env_config["password"],
-            key_path=None,
-            deploy_dir=None
-        )
         
         # 创建部署工作流
         workflow = DeploymentWorkflow(
@@ -80,9 +71,29 @@ class DeploymentTester:
         )
         
         try:
-            # 执行部署
-            logger.info("🚀 开始部署...")
-            workflow.run_deploy(request)
+            # 根据模式创建不同的部署请求
+            if local_mode:
+                # 本地模式
+                request = LocalDeploymentRequest(
+                    repo_url=project.repo_url,
+                    deploy_dir=None  # 使用默认目录
+                )
+                logger.info("🚀 开始本地部署...")
+                workflow.run_local_deploy(request)
+            else:
+                # SSH 远程模式（Docker 容器）
+                request = DeploymentRequest(
+                    repo_url=project.repo_url,
+                    host=env_config["host"],
+                    port=env_config["port"],
+                    username=env_config["username"],
+                    auth_method="password",
+                    password=env_config["password"],
+                    key_path=None,
+                    deploy_dir=None
+                )
+                logger.info("🚀 开始远程部署...")
+                workflow.run_deploy(request)
             
             # 等待部署完成（Agent会自己完成）
             deployment_time = time.time() - start_time

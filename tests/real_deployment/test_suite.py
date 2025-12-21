@@ -16,6 +16,7 @@ from .test_projects import (
     get_all_projects
 )
 from .test_environment import TestEnvironment
+from .local_test_environment import LocalTestEnvironment
 from .deployment_tester import DeploymentTester
 from .metrics_collector import MetricsCollector, ProjectMetrics
 from .report_generator import ReportGenerator
@@ -32,7 +33,8 @@ def run_test_suite(
     config_path: Optional[str] = None,
     project_filter: Optional[str] = None,
     difficulty_filter: Optional[str] = None,
-    skip_setup: bool = False
+    skip_setup: bool = False,
+    local_mode: bool = True
 ) -> tuple[List[ProjectMetrics], Dict[str, Any]]:
     """
     运行完整的测试套件
@@ -42,12 +44,17 @@ def run_test_suite(
         project_filter: 项目名称过滤（可选）
         difficulty_filter: 难度过滤（可选）
         skip_setup: 跳过环境设置（用于调试）
+        local_mode: 使用本地测试模式（True=本地，False=Docker容器）
         
     Returns:
         (结果列表, 报告摘要) 元组
     """
     # 1. 加载配置
     logger.info("🚀 开始真实部署测试套件")
+    
+    # 显示测试模式
+    mode_name = "本地测试模式 🏠" if local_mode else "Docker 容器测试模式 🐳"
+    logger.info(f"   测试模式: {mode_name}")
     try:
         if config_path:
             config = load_config(config_path)
@@ -83,7 +90,15 @@ def run_test_suite(
     logger.info("")
     
     # 3. 创建测试环境
-    env = TestEnvironment()
+    if local_mode:
+        # 本地测试模式
+        env = LocalTestEnvironment()
+        logger.info("🏠 使用本地测试环境")
+    else:
+        # Docker 容器测试模式
+        env = TestEnvironment()
+        logger.info("🐳 使用 Docker 容器测试环境")
+    
     env_config = None
     
     if not skip_setup:
@@ -113,7 +128,11 @@ def run_test_suite(
         
         try:
             # 执行测试
-            metrics_dict = tester.test_project(project, env_config)
+            metrics_dict = tester.test_project(
+                project, 
+                env_config,
+                local_mode=local_mode
+            )
             
             # 转换为ProjectMetrics对象
             metrics = MetricsCollector.convert_dict_to_metrics(metrics_dict)
@@ -211,15 +230,31 @@ def main():
         action="store_true",
         help="跳过环境设置（调试模式）"
     )
+    parser.add_argument(
+        "--local",
+        action="store_true",
+        default=False,
+        help="使用本地测试模式（推荐，避免 Docker in Docker 问题）"
+    )
+    parser.add_argument(
+        "--docker",
+        action="store_true",
+        help="使用 Docker 容器测试模式（需要完全隔离时使用）"
+    )
     
     args = parser.parse_args()
+    
+    # 确定测试模式：显式指定 --docker 则用 Docker，否则默认本地
+    # 如果显式指定 --local 也用本地模式
+    local_mode = not args.docker or args.local
     
     try:
         results, summary = run_test_suite(
             config_path=args.config,
             project_filter=args.project,
             difficulty_filter=args.difficulty,
-            skip_setup=args.skip_setup
+            skip_setup=args.skip_setup,
+            local_mode=local_mode
         )
         
         # 设置退出码

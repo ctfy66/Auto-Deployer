@@ -1,4 +1,11 @@
 {
+  "test_mode": "local",
+  "local_test_environment": {
+    "workspace_dir": "tests/results/local_workspace",
+    "cleanup_on_success": false,
+    "cleanup_on_failure": false,
+    "preserve_logs": true
+  },
   "test_environment": {
     "base_image": "ubuntu:22.04",
     "container_name": "autodep-test-env",
