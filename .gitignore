@@ -49,6 +49,7 @@ htmlcov/
 agent_logs/
 .auto-deployer/
 *.log
+tests\results\workspace
 
 # GitHub Actions generated config
 config/github_actions_config.json
