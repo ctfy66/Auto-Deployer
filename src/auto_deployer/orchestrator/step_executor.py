@@ -470,6 +470,7 @@ class StepExecutor:
                 exit_code=result.exit_status,
                 stdout=result.stdout or "",
                 stderr=result.stderr or "",
+                reasoning=reasoning,
                 timestamp=datetime.now().isoformat()
             )
             
@@ -500,6 +501,7 @@ class StepExecutor:
                 exit_code=-1,
                 stdout="",
                 stderr=str(e),
+                reasoning=reasoning,
                 timestamp=datetime.now().isoformat()
             )
     

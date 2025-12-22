@@ -86,7 +86,6 @@
   "interaction": {
     "enabled": true,
     "mode": "auto",
-    "auto_retry_on_interaction": true,
-    "_comment": "mode options: 'cli' (interactive), 'auto' (auto-retry on interaction), 'callback' (GUI/Web integration)"
+    "_comment": "mode options: 'cli' (interactive), 'auto' (auto-select defaults/first option), 'callback' (GUI/Web integration)"
   }
 }

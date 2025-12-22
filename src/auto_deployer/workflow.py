@@ -69,21 +69,17 @@ class DeploymentWorkflow:
     
     def _create_interaction_handler(self) -> UserInteractionHandler:
         """根据配置创建合适的交互处理器"""
-        from .interaction import AutoRetryHandler, AutoResponseHandler
+        from .interaction import AutoResponseHandler
         
         if not self.config.interaction.enabled:
-            logger.info("User interaction disabled - using AutoRetryHandler")
-            return AutoRetryHandler()  # 使用默认值 'continue'
+            logger.info("User interaction disabled - using AutoResponseHandler")
+            return AutoResponseHandler(use_defaults=True, always_confirm=True)
         
         mode = self.config.interaction.mode.lower()
         
         if mode == "auto":
-            if self.config.interaction.auto_retry_on_interaction:
-                logger.info("Auto mode enabled - using AutoRetryHandler")
-                return AutoRetryHandler()  # 使用默认值 'continue'
-            else:
-                logger.info("Auto mode enabled - using AutoResponseHandler")
-                return AutoResponseHandler(use_defaults=True, always_confirm=True)
+            logger.info("Auto mode enabled - using AutoResponseHandler (defaults/first option)")
+            return AutoResponseHandler(use_defaults=True, always_confirm=True)
         elif mode == "cli":
             logger.info("CLI interaction mode enabled")
             return CLIInteractionHandler()

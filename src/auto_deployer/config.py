@@ -114,7 +114,6 @@ class InteractionConfig:
     
     enabled: bool = True
     mode: str = "cli"  # "cli" | "auto" | "callback"
-    auto_retry_on_interaction: bool = True
 
 
 @dataclass

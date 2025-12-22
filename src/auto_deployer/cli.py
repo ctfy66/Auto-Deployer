@@ -76,11 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
     # 交互模式选项
     deploy_parser.add_argument(
         "--non-interactive", action="store_true",
-        help="Disable user interaction (auto-retry on interaction requests)"
-    )
-    deploy_parser.add_argument(
-        "--auto-mode", choices=["retry", "defaults"], default=None,
-        help="Auto mode behavior: 'retry' triggers replanning, 'defaults' uses default values"
+        help="Disable user interaction (auto-select defaults/first option)"
     )
 
     # logs 子命令 - 查看 Agent 日志
@@ -647,17 +643,7 @@ def dispatch_command(args: argparse.Namespace) -> int:
             # 命令行指定非交互模式
             context.config.interaction.enabled = True
             context.config.interaction.mode = "auto"
-            context.config.interaction.auto_retry_on_interaction = True
-            logger.info("CLI override: non-interactive mode enabled")
-        
-        if getattr(args, "auto_mode", None):
-            context.config.interaction.mode = "auto"
-            if args.auto_mode == "retry":
-                context.config.interaction.auto_retry_on_interaction = True
-                logger.info("CLI override: auto-mode set to 'retry' (replanning on interaction)")
-            else:  # defaults
-                context.config.interaction.auto_retry_on_interaction = False
-                logger.info("CLI override: auto-mode set to 'defaults' (use default values)")
+            logger.info("CLI override: non-interactive mode enabled (auto-select defaults)")
     
     workflow = DeploymentWorkflow(
         config=context.config,

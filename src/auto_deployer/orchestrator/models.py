@@ -223,6 +223,7 @@ class CommandRecord:
     exit_code: int
     stdout: str
     stderr: str
+    reasoning: Optional[str] = None
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
 
