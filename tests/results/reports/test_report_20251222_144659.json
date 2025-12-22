@@ -1,0 +1,62 @@
+{
+  "timestamp": "2025-12-22T14:46:59.350356",
+  "config": {
+    "model": "x-ai/grok-code-fast-1",
+    "temperature": 0.0,
+    "max_iterations": 180
+  },
+  "summary": {
+    "total_projects": 1,
+    "successful": 1,
+    "failed": 0,
+    "success_rate": 100.0,
+    "by_difficulty": {
+      "easy": {
+        "total": 1,
+        "success": 1,
+        "success_rate": 100.0
+      }
+    },
+    "average_metrics": {
+      "deployment_time_seconds": 298.1962208747864,
+      "iterations": 6,
+      "commands": 6,
+      "llm_calls": 6,
+      "user_interactions": 0,
+      "error_recoveries": 0
+    },
+    "strategy_accuracy": 100.0,
+    "verification_rate": 100.0
+  },
+  "results": [
+    {
+      "project_name": "nodejs-express-hello",
+      "project_difficulty": "easy",
+      "success": true,
+      "final_status": "success",
+      "deployment_time_seconds": 298.1962208747864,
+      "total_iterations": 6,
+      "total_commands": 6,
+      "llm_call_count": 6,
+      "user_interactions": 0,
+      "error_recovery_count": 0,
+      "strategy_used": "traditional",
+      "expected_strategy": "traditional",
+      "strategy_correct": true,
+      "verification_passed": true,
+      "verification_details": [
+        {
+          "url": "http://localhost:3000",
+          "status_code": 200,
+          "expected_status": 200,
+          "status_match": true,
+          "content_match": true,
+          "passed": true,
+          "response_length": 11
+        }
+      ],
+      "log_file": "agent_logs\\deploy_express_20251222_144212.json",
+      "error": null
+    }
+  ]
+}

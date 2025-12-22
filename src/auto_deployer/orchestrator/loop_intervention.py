@@ -24,6 +24,9 @@ class LoopInterventionManager:
     3. 第三次及以后：询问用户介入
     """
     
+    # 用户介入后跳过循环检测的指令数量
+    SKIP_AFTER_USER_INTERVENTION = 5
+    
     def __init__(self, temperature_boost_levels: Optional[List[float]] = None):
         """初始化干预管理器
         
@@ -33,6 +36,7 @@ class LoopInterventionManager:
         self.loop_count = 0
         self.temp_boost_levels = temperature_boost_levels or [0.3, 0.5, 0.7]
         self.last_intervention_iteration = 0
+        self.skip_detection_count = 0  # 剩余需要跳过循环检测的指令数量
         
         logger.info("LoopInterventionManager initialized")
     
@@ -92,7 +96,28 @@ class LoopInterventionManager:
         """重置干预计数器（用于新步骤）"""
         self.loop_count = 0
         self.last_intervention_iteration = 0
+        self.skip_detection_count = 0
         logger.debug("LoopInterventionManager reset")
+    
+    def should_skip_detection(self) -> bool:
+        """检查是否应该跳过循环检测
+        
+        Returns:
+            bool: True 表示应该跳过检测
+        """
+        return self.skip_detection_count > 0
+    
+    def consume_skip_count(self):
+        """消耗一次跳过计数（每次执行指令后调用）"""
+        if self.skip_detection_count > 0:
+            self.skip_detection_count -= 1
+            logger.debug(f"Loop detection skip count decreased to {self.skip_detection_count}")
+    
+    def activate_user_intervention_mode(self):
+        """激活用户介入模式，设置跳过检测的指令数量"""
+        self.skip_detection_count = self.SKIP_AFTER_USER_INTERVENTION
+        logger.info(f"👤 User intervention mode activated: skipping loop detection for next {self.SKIP_AFTER_USER_INTERVENTION} commands")
+
     
     def _build_reflection_prompt(self, detection: "LoopDetectionResult") -> str:
         """构建反思提示文本

@@ -1,0 +1,58 @@
+{
+  "timestamp": "2025-12-22T14:05:22.021672",
+  "config": {
+    "model": "deepseek-chat",
+    "temperature": 0.7,
+    "max_iterations": 180
+  },
+  "summary": {
+    "total_projects": 1,
+    "successful": 0,
+    "failed": 1,
+    "success_rate": 0.0,
+    "by_difficulty": {
+      "easy": {
+        "total": 1,
+        "success": 0,
+        "success_rate": 0.0
+      }
+    },
+    "average_metrics": {
+      "deployment_time_seconds": 0.0,
+      "iterations": 0.0,
+      "commands": 0.0,
+      "llm_calls": 0.0,
+      "user_interactions": 0.0,
+      "error_recoveries": 0.0
+    },
+    "strategy_accuracy": 100.0,
+    "verification_rate": 0.0
+  },
+  "results": [
+    {
+      "project_name": "docker-welcome",
+      "project_difficulty": "easy",
+      "success": false,
+      "final_status": "aborted",
+      "deployment_time_seconds": 671.146098613739,
+      "total_iterations": 3,
+      "total_commands": 3,
+      "llm_call_count": 3,
+      "user_interactions": 0,
+      "error_recovery_count": 0,
+      "strategy_used": "docker",
+      "expected_strategy": "docker",
+      "strategy_correct": true,
+      "verification_passed": false,
+      "verification_details": [
+        {
+          "url": "http://localhost:8080",
+          "error": "Connection refused",
+          "passed": false
+        }
+      ],
+      "log_file": "agent_logs\\deploy_welcome-to-docker_20251222_135441.json",
+      "error": null
+    }
+  ]
+}

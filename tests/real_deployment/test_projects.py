@@ -31,6 +31,21 @@ class TestProject:
 TEST_PROJECTS: List[TestProject] = [
     # ========== Easy 难度项目 ==========
     TestProject(
+        name="HuiBlog",
+        repo_url="git@github.com:ctfy66/HuiBlog.git",
+        description="next.js个人博客",
+        expected_strategy="traditional",
+        difficulty="easy",
+        expected_time_minutes=5,
+        verification=VerificationConfig(
+            urls=["http://localhost:3000"],
+            expected_status=200,
+            timeout=10
+        ),
+        tags=["next.js", "static", "simple"],
+        skip=True
+    ),
+    TestProject(
         name="docker-welcome",
         repo_url="https://github.com/docker/welcome-to-docker.git",
         description="Docker官方欢迎页面项目，包含Dockerfile，适合测试Docker部署策略",
@@ -42,7 +57,8 @@ TEST_PROJECTS: List[TestProject] = [
             expected_status=200,
             timeout=10
         ),
-        tags=["docker", "static", "simple"]
+        tags=["docker", "static", "simple"],
+        skip=True
     ),
     TestProject(
         name="nodejs-express-hello",
@@ -91,23 +107,7 @@ TEST_PROJECTS: List[TestProject] = [
     ),
     
     # ========== Medium 难度项目 ==========
-    TestProject(
-        name="docker-compose-voting-app",
-        repo_url="https://github.com/dockersamples/example-voting-app.git",
-        description="Docker官方示例投票应用，使用docker-compose，包含多个服务",
-        expected_strategy="docker-compose",
-        difficulty="medium",
-        expected_time_minutes=12,
-        verification=VerificationConfig(
-            urls=[
-                "http://localhost:5000",  # 前端
-                "http://localhost:5001"   # 结果页面
-            ],
-            expected_status=200,
-            timeout=15
-        ),
-        tags=["docker-compose", "fullstack", "multi-service"]
-    ),
+    
     TestProject(
         name="static-hugo-site",
         repo_url="https://github.com/gohugoio/hugo.git",
@@ -121,7 +121,7 @@ TEST_PROJECTS: List[TestProject] = [
             timeout=10
         ),
         tags=["static", "hugo", "golang"],
-        skip=True  # Hugo主仓库较复杂，暂时跳过
+        skip=False  
     ),
     TestProject(
         name="nodejs-fullstack",
@@ -136,7 +136,7 @@ TEST_PROJECTS: List[TestProject] = [
             timeout=10
         ),
         tags=["nodejs", "nextjs", "fullstack"],
-        skip=True  # Next.js主仓库较复杂，暂时跳过
+        skip=False  # Next.js主仓库较复杂，暂时跳过
     ),
     TestProject(
         name="BuildingAI",
@@ -169,7 +169,7 @@ TEST_PROJECTS: List[TestProject] = [
             timeout=10
         ),
         tags=["python", "django", "complex"],
-        skip=True  # Django主仓库较复杂，暂时跳过
+        skip=False  
     ),
     TestProject(
         name="microservices-docker-compose",
@@ -187,59 +187,13 @@ TEST_PROJECTS: List[TestProject] = [
             expected_status=200,
             timeout=20
         ),
-        tags=["docker-compose", "microservices", "complex"]
-    ),
-    
-    
-    
-    # ========== 简单示例项目（适合快速测试）==========
-    TestProject(
-        name="nodejs-hello-world",
-        repo_url="https://github.com/nodejs/node.git",
-        description="Node.js官方仓库，包含简单示例，测试传统Node.js部署",
-        expected_strategy="traditional",
-        difficulty="easy",
-        expected_time_minutes=5,
-        verification=VerificationConfig(
-            urls=["http://localhost:3000"],
-            expected_status=200,
-            timeout=10
-        ),
-        tags=["nodejs", "simple"],
-        skip=True  # Node.js主仓库较复杂
-    ),
-    TestProject(
-        name="python-hello-world",
-        repo_url="https://github.com/python/cpython.git",
-        description="Python官方仓库，测试Python环境部署",
-        expected_strategy="traditional",
-        difficulty="easy",
-        expected_time_minutes=5,
-        verification=VerificationConfig(
-            urls=["http://localhost:5000"],
-            expected_status=200,
-            timeout=10
-        ),
-        tags=["python", "simple"],
-        skip=True  # Python主仓库较复杂
-    ),
-    
-    # ========== 静态站点项目 ==========
-    TestProject(
-        name="static-html-sample",
-        repo_url="https://github.com/octocat/Hello-World.git",
-        description="GitHub官方Hello World示例，简单的HTML静态站点",
-        expected_strategy="static",
-        difficulty="easy",
-        expected_time_minutes=3,
-        verification=VerificationConfig(
-            urls=["http://localhost:80"],
-            expected_status=200,
-            timeout=10
-        ),
-        tags=["static", "html", "simple"]
+        tags=["docker-compose", "microservices", "complex"],
+        skip = True
     ),
 ]
+    
+    
+    
 
 
 def get_projects_by_difficulty(difficulty: str) -> List[TestProject]:

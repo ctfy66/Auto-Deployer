@@ -115,59 +115,65 @@ class StepExecutor:
             
             # === Loop Detection ===
             if len(step_ctx.commands) >= 3:
-                detection = self.loop_detector.check(step_ctx.commands)
-                
-                if detection.is_loop:
-                    logger.warning(f"   🔄 Loop detected: {detection.loop_type} (confidence: {detection.confidence:.2%})")
-                    for evidence in detection.evidence:
-                        logger.warning(f"      • {evidence}")
+                # 检查是否应该跳过循环检测（用户介入后的N个指令）
+                if self.loop_intervention_manager.should_skip_detection():
+                    logger.debug(f"   ⏭️  Skipping loop detection (user intervention cooldown: {self.loop_intervention_manager.skip_detection_count} commands remaining)")
+                    self.loop_intervention_manager.consume_skip_count()
+                else:
+                    # 执行正常的循环检测
+                    detection = self.loop_detector.check(step_ctx.commands)
                     
-                    # Decide intervention
-                    intervention = self.loop_intervention_manager.decide_intervention(
-                        detection, iteration
-                    )
-                    
-                    logger.info(f"   {intervention['message']}")
-                    
-                    if intervention['action'] == 'boost_temperature':
-                        # Boost temperature
-                        self.llm_config.temperature = intervention['temperature']
-                        logger.info(f"      Temperature: {self.llm_config.temperature}")
-                    
-                    elif intervention['action'] == 'inject_reflection':
-                        # Inject reflection prompt
-                        step_ctx.reflection_prompt = intervention['reflection_text']
-                        self.llm_config.temperature = intervention['temperature']
-                        logger.info(f"      Reflection injected, temperature: {self.llm_config.temperature}")
-                    
-                    elif intervention['action'] == 'ask_user':
-                        # Check if in auto mode
-                        if self._is_auto_mode():
-                            # Auto mode: don't ask user, apply automatic intervention
-                            logger.info(f"      🤖 Auto mode: Skipping user interaction, applying automatic intervention")
-                            
-                            # Apply stronger intervention: boost temperature + inject reflection
+                    if detection.is_loop:
+                        logger.warning(f"   🔄 Loop detected: {detection.loop_type} (confidence: {detection.confidence:.2%})")
+                        for evidence in detection.evidence:
+                            logger.warning(f"      • {evidence}")
+                        
+                        # Decide intervention
+                        intervention = self.loop_intervention_manager.decide_intervention(
+                            detection, iteration
+                        )
+                        
+                        logger.info(f"   {intervention['message']}")
+                        
+                        if intervention['action'] == 'boost_temperature':
+                            # Boost temperature
                             self.llm_config.temperature = intervention['temperature']
-                            reflection = self.loop_intervention_manager._build_reflection_prompt(detection)
-                            step_ctx.reflection_prompt = reflection
-                            
-                            logger.info(f"      Temperature boosted to: {self.llm_config.temperature}")
-                            logger.info(f"      Reflection prompt injected automatically")
-                            
-                            # Continue execution with enhanced intervention
-                        else:
-                            # Interactive mode: ask user for intervention
+                            logger.info(f"      Temperature: {self.llm_config.temperature}")
+                        
+                        elif intervention['action'] == 'inject_reflection':
+                            # Inject reflection prompt
+                            step_ctx.reflection_prompt = intervention['reflection_text']
                             self.llm_config.temperature = intervention['temperature']
-                            user_decision = self._handle_loop_intervention(detection, step_ctx)
-                            
-                            if user_decision == 'abort':
-                                step_ctx.status = StepStatus.FAILED
-                                step_ctx.error = "User aborted due to severe loop"
-                                return StepResult.failed(error="User aborted due to severe loop")
-                            elif user_decision == 'skip':
-                                step_ctx.status = StepStatus.SKIPPED
-                                return StepResult.skipped(reason="User skipped due to loop")
-                            # Otherwise continue with user guidance
+                            logger.info(f"      Reflection injected, temperature: {self.llm_config.temperature}")
+                        
+                        elif intervention['action'] == 'ask_user':
+                            # Check if in auto mode
+                            if self._is_auto_mode():
+                                # Auto mode: don't ask user, apply automatic intervention
+                                logger.info(f"      🤖 Auto mode: Skipping user interaction, applying automatic intervention")
+                                
+                                # Apply stronger intervention: boost temperature + inject reflection
+                                self.llm_config.temperature = intervention['temperature']
+                                reflection = self.loop_intervention_manager._build_reflection_prompt(detection)
+                                step_ctx.reflection_prompt = reflection
+                                
+                                logger.info(f"      Temperature boosted to: {self.llm_config.temperature}")
+                                logger.info(f"      Reflection prompt injected automatically")
+                                
+                                # Continue execution with enhanced intervention
+                            else:
+                                # Interactive mode: ask user for intervention
+                                self.llm_config.temperature = intervention['temperature']
+                                user_decision = self._handle_loop_intervention(detection, step_ctx)
+                                
+                                if user_decision == 'abort':
+                                    step_ctx.status = StepStatus.FAILED
+                                    step_ctx.error = "User aborted due to severe loop"
+                                    return StepResult.failed(error="User aborted due to severe loop")
+                                elif user_decision == 'skip':
+                                    step_ctx.status = StepStatus.SKIPPED
+                                    return StepResult.skipped(reason="User skipped due to loop")
+                                # Otherwise continue with user guidance
             
             # 获取 LLM 决策
             action = self._get_next_action(step_ctx, deploy_ctx)
@@ -567,6 +573,8 @@ What would you like to do?
         choice = response.value.lower()
         
         if "continue" in choice:
+            # 激活用户介入模式，跳过后续N个指令的循环检测
+            self.loop_intervention_manager.activate_user_intervention_mode()
             return "continue"
         elif "skip" in choice:
             return "skip"
@@ -591,9 +599,14 @@ USER GUIDANCE:
 Please follow the user's guidance carefully.
 """
                 logger.info(f"   User guidance injected: {guidance_response.value[:100]}...")
+                
+                # 激活用户介入模式，跳过后续N个指令的循环检测
+                self.loop_intervention_manager.activate_user_intervention_mode()
             
             return "continue"
         else:
+            # 默认继续，也激活跳过模式
+            self.loop_intervention_manager.activate_user_intervention_mode()
             return "continue"
     
     

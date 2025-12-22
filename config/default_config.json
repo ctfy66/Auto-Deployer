@@ -1,7 +1,7 @@
 {
   "llm": {
-    "provider": "deepseek",
-    "model": null,
+    "provider": "openrouter",
+    "model": "x-ai/grok-code-fast-1",
     "api_key": null,
     "endpoint": null,
     "temperature": 0.0,
@@ -85,7 +85,7 @@
   },
   "interaction": {
     "enabled": true,
-    "mode": "auto",
+    "mode": "cli",
     "_comment": "mode options: 'cli' (interactive), 'auto' (auto-select defaults/first option), 'callback' (GUI/Web integration)"
   }
 }
