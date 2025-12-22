@@ -136,7 +136,7 @@ TEST_PROJECTS: List[TestProject] = [
             timeout=10
         ),
         tags=["nodejs", "nextjs", "fullstack"],
-        skip=False  # Next.js主仓库较复杂，暂时跳过
+        skip=False  
     ),
     TestProject(
         name="BuildingAI",
